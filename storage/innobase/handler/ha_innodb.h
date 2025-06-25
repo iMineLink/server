@@ -44,8 +44,17 @@ struct ha_table_option_struct
 						innodb_use_atomic_writes.
 						Atomic writes are not used if
 						value OFF.*/
-	uint		encryption;		/*!<  DEFAULT, ON, OFF */
+	uint            adaptive_hash_index;    /*!< DEFAULT, ON, OFF */
+	uint		encryption;		/*!< DEFAULT, ON, OFF */
 	ulonglong	encryption_key_id;	/*!< encryption key id  */
+};
+
+struct ha_index_option_struct
+{
+        uint            adaptive_hash_index;    /*!< DEFAULT, ON, OFF */
+        ulonglong       complete_fields;
+	ulonglong	bytes_from_incomplete_fields;
+	my_bool         for_equal_hash_point_to_last_record;
 };
 
 /** The class defining a handle to an Innodb table */

@@ -1071,7 +1071,7 @@ inline void buf_pool_t::garbage_collect() noexcept
   my_cond_wait(&done_flush_list, &flush_list_mutex.m_mutex);
   mysql_mutex_unlock(&flush_list_mutex);
 # ifdef BTR_CUR_HASH_ADAPT
-  bool ahi_disabled= btr_search.disable();
+  ulong ahi_disabled= btr_search.disable();
 # endif /* BTR_CUR_HASH_ADAPT */
   time_t start= time(nullptr);
   mysql_mutex_lock(&mutex);
@@ -1092,7 +1092,7 @@ inline void buf_pool_t::garbage_collect() noexcept
       shrunk(size, reduce_size);
 # ifdef BTR_CUR_HASH_ADAPT
       if (ahi_disabled)
-        btr_search.enable(true);
+        btr_search.enable(true, ahi_disabled);
 # endif
       mysql_mutex_unlock(&mutex);
       sql_print_information("InnoDB: Memory pressure event shrunk"
@@ -1502,8 +1502,8 @@ bool buf_pool_t::create() noexcept
 
   buf_LRU_old_ratio_update(100 * 3 / 8, false);
 #ifdef BTR_CUR_HASH_ADAPT
-  if (btr_search.enabled)
-    btr_search.enable();
+  if (btr_search.get_enabled())
+    btr_search.enable(false, btr_search.get_enabled());
 #endif
 
 #ifdef __linux__
@@ -1959,7 +1959,7 @@ ATTRIBUTE_COLD void buf_pool_t::resize(size_t size, THD *thd) noexcept
   }
 
 #ifdef BTR_CUR_HASH_ADAPT
-  bool ahi_disabled= false;
+  ulong ahi_disabled= 0;
 #endif
 
   const bool significant_change=
@@ -2075,7 +2075,7 @@ ATTRIBUTE_COLD void buf_pool_t::resize(size_t size, THD *thd) noexcept
 
 #ifdef BTR_CUR_HASH_ADAPT
     if (ahi_disabled)
-      btr_search.enable(true);
+      btr_search.enable(true, ahi_disabled);
 #endif
     if (n_blocks_removed)
       sql_print_information("InnoDB: innodb_buffer_pool_size=%zum (%zu pages)"
@@ -2161,7 +2161,7 @@ ATTRIBUTE_COLD void buf_pool_t::resize(size_t size, THD *thd) noexcept
                     MYF(ME_ERROR_LOG));
 #ifdef BTR_CUR_HASH_ADAPT
     if (ahi_disabled)
-      btr_search.enable(true);
+      btr_search.enable(true, ahi_disabled);
 #endif
     mysql_mutex_lock(&LOCK_global_system_variables);
   }
@@ -3696,7 +3696,7 @@ ATTRIBUTE_COLD void buf_pool_t::clear_hash_index() noexcept
   std::set<dict_index_t*> garbage;
 
   mysql_mutex_lock(&mutex);
-  ut_ad(!btr_search.enabled);
+  ut_ad(!btr_search.get_enabled());
 
   for (char *extent= memory,
          *end= memory + block_descriptors_in_bytes(n_blocks);

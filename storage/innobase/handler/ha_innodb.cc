@@ -675,8 +675,40 @@ ha_create_table_option innodb_table_option_list[]=
   HA_TOPTION_ENUM("ENCRYPTED", encryption, "DEFAULT,YES,NO", 0),
   /* With this option the user defines the key identifier using for the encryption */
   HA_TOPTION_SYSVAR("ENCRYPTION_KEY_ID", encryption_key_id, default_encryption_key_id),
-
+  HA_TOPTION_ENUM("ADAPTIVE_HASH_INDEX", adaptive_hash_index,
+                  table_hint_options, TABLE_HINT_DEFAULT),
   HA_TOPTION_END
+};
+
+constexpr int max_bytes_from_incomplete_field= REDUNDANT_REC_MAX_DATA_SIZE;
+constexpr int max_complete_fields= 64;  /* 32 PK + 32 secondary index fields */
+static_assert(
+  max_complete_fields <= dict_index_t::ahi::max_fields,
+  "max_complete_fields too large for dict_index_t::ahi"
+);
+static_assert(
+  max_bytes_from_incomplete_field <= dict_index_t::ahi::max_bytes,
+  "max_bytes_from_incomplete_field too large for dict_index_t::ahi"
+);
+/* Max value in table_hint_options is TABLE_HINT_NO */
+static_assert(TABLE_HINT_NO <= dict_index_t::ahi::max_enabled,
+  "TABLE_HINT enum values too large for dict_index_t::ahi"
+);
+
+
+ha_create_table_option innodb_index_option_list[]=
+{
+  HA_IOPTION_ENUM("ADAPTIVE_HASH_INDEX", adaptive_hash_index,
+                  table_hint_options, TABLE_HINT_DEFAULT),
+  HA_IOPTION_NUMBER("COMPLETE_FIELDS", complete_fields, ULONGLONG_MAX, 0,
+                    max_complete_fields, 1),
+  HA_IOPTION_NUMBER("BYTES_FROM_INCOMPLETE_FIELD",
+                    bytes_from_incomplete_field, ULONGLONG_MAX, 0,
+                    max_bytes_from_incomplete_field, 1),
+  HA_IOPTION_ENUM("FOR_EQUAL_HASH_POINT_TO_LAST_RECORD",
+                  for_equal_hash_point_to_last_record, table_hint_options,
+                  TABLE_HINT_DEFAULT),
+  HA_IOPTION_END
 };
 
 /*************************************************************//**
@@ -2861,6 +2893,125 @@ static bool innodb_copy_stat_flags(dict_table_t *table,
   return true;
 }
 
+#ifdef BTR_CUR_HASH_ADAPT
+/** Enable the adaptive hash index for indexes where needed.
+@param innodb_table  InnoDB table definition
+@param option_struct MariaDB table options
+@param table         MariaDB table handle */
+static void innodb_ahi_enable(dict_table_t *innodb_table,
+                              const ha_table_option_struct *option_struct,
+                              const TABLE *table)
+{
+  /* Mapping from adaptive_hash_index table_hint_options to
+  dict_index_t::ahi::preference:
+
+  TABLE_HINT_NO      (2) -> (0) AHI_INDEX_FORCE_DISABLED
+  TABLE_HINT_DEFAULT (0) -> (1) AHI_INDEX_NO_PREFERENCE
+  TABLE_HINT_YES     (1) -> (2) AHI_INDEX_PREFER_ENABLED
+
+  Index preference, if set to YES|NO, will override table preference. */
+  ut_ad(!option_struct || option_struct->adaptive_hash_index <= TABLE_HINT_NO);
+  const uint8_t table_ahi= option_struct
+    ? uint8_t((option_struct->adaptive_hash_index + 1) % 3)
+    : uint8_t{1};
+  ut_ad(table_ahi <= dict_index_t::ahi::AHI_INDEX_PREFER_ENABLED);
+
+  /* Check if we can safely access InnoDB's ha_index_option_struct.
+  For partitioned InnoDB tables, db_type() returns partition_hton,
+  so we need to check default_part_plugin for the underlying engine.
+  For wrapper engines like mroonga, we must NOT access InnoDB's
+  structure as it has a different memory layout. */
+  bool is_innodb_table= table->s->db_type() == innodb_hton_ptr;
+#ifdef WITH_PARTITION_STORAGE_ENGINE
+  if (!is_innodb_table && table->s->default_part_plugin)
+    is_innodb_table=
+      plugin_hton(table->s->default_part_plugin) == innodb_hton_ptr;
+#endif
+
+  /* In case there is no PRIMARY KEY or UNIQUE INDEX on NOT NULL
+  columns, there will be GEN_CLUST_INDEX(DB_ROW_ID). Default to the
+  table option for it. If a PRIMARY KEY is defined, this default
+  value may be updated in the loop below. */
+  auto* def_search_info=
+    &UT_LIST_GET_FIRST(innodb_table->indexes)->search_info;
+  for (auto i= table->s->keys; i--; )
+  {
+    const KEY &key= table->s->key_info[i];
+    dict_index_t *index=
+        dict_table_get_index_on_name(innodb_table, key.name.str);
+    if (!index || !index->n_uniq)
+      continue;  /* FTS indexes have n_uniq == 0; AHI is not applicable */
+
+    constexpr uint64_t opt_max= static_cast<uint64_t>(ULONGLONG_MAX);
+    static_assert(opt_max == UINT64_MAX, "Unexpected max option value");
+    uint64_t fields= opt_max;
+    uint64_t bytes= opt_max;
+    uint8_t index_ahi= 1;
+    uint32_t right= TABLE_HINT_DEFAULT;
+
+    if (key.option_struct && is_innodb_table)
+    {
+      fields=
+        static_cast<uint64_t>(key.option_struct->complete_fields);
+      bytes=
+        static_cast<uint64_t>(key.option_struct->bytes_from_incomplete_field);
+      ut_ad(fields == opt_max || fields <= max_complete_fields);
+      ut_ad(bytes == opt_max || bytes <= max_bytes_from_incomplete_field);
+      ut_ad(key.option_struct->adaptive_hash_index <= TABLE_HINT_NO);
+      index_ahi=
+        uint8_t((key.option_struct->adaptive_hash_index + 1) % 3);
+      right= key.option_struct->for_equal_hash_point_to_last_record;
+      ut_ad(right <= TABLE_HINT_NO);
+    }
+
+    const uint16_t n_uniq= index->n_uniq;
+    /* Clamp fields to the number of unique index fields */
+    if (UNIV_UNLIKELY(fields != opt_max && fields > n_uniq))
+      fields= n_uniq;
+    ut_ad(fields == opt_max || fields <= n_uniq);
+    /* If all unique fields are included, force bytes to 0 */
+    if (UNIV_UNLIKELY(fields != opt_max && fields >= n_uniq))
+      bytes= 0;
+    /* If bytes is set and fields is not, force fields to 0 to
+    disambiguate which field are the bytes referring to */
+    if (UNIV_UNLIKELY(fields == opt_max && bytes != opt_max))
+      fields= 0;
+    /* If fields < n_uniq and bytes != opt_max, there is no need
+    to clamp bytes, as rec_fold() will already do so */
+
+    /* fields==0 + bytes==0 is useless */
+    if (UNIV_UNLIKELY(index_ahi && fields == 0 && bytes == 0))
+      index_ahi= 0;  /* Force disable AHI */
+    /* Use index preference if set, otherwise use table preference */
+    const uint8_t mask= uint8_t(0 - (index_ahi & 1));
+    /* mask == 0xFF if index_ahi == 1, indicates index preference unset */
+    const uint8_t ahi= uint8_t((table_ahi & mask) | (index_ahi & ~mask));
+    ut_ad(ahi <= dict_index_t::ahi::AHI_INDEX_PREFER_ENABLED);
+
+    static_assert((uint64_t(1) << 63) > max_complete_fields,
+                  "Cannot use highest bit as unused flag");
+    static_assert((uint64_t(1) << 63) > max_bytes_from_incomplete_field,
+                  "Cannot use highest bit as unused flag");
+    index->search_info.set_enabled_fixed_mask(
+      dict_index_t::ahi::preference{ahi},
+      (~fields >> 63) & 1,  /* fields != opt_max */
+      (~bytes >> 63) & 1,  /* bytes != opt_max */
+      (right | (right >> 1)) & 1,  /* right != TABLE_HINT_DEFAULT */
+      uint8_t(fields),
+      uint16_t(bytes),
+      (right >> 1) & 1  /* right == TABLE_HINT_NO */
+    );
+
+    if (def_search_info == &index->search_info)
+      def_search_info= nullptr;
+  }
+  if (def_search_info)
+    def_search_info->set_enabled_fixed_mask(
+      dict_index_t::ahi::preference{table_ahi},
+      false, false, false, 0, 0, false);
+}
+#endif
+
 /*********************************************************************//**
 Copy table flags from MySQL's HA_CREATE_INFO into an InnoDB table object.
 Those flags are stored in .frm file and end up in the MySQL table object,
@@ -2871,28 +3022,39 @@ void
 innobase_copy_frm_flags_from_create_info(
 /*=====================================*/
 	dict_table_t*		innodb_table,	/*!< in/out: InnoDB table */
-	const HA_CREATE_INFO*	create_info)	/*!< in: create info */
+	const HA_CREATE_INFO*	create_info,	/*!< in: create info */
+	const TABLE*		table)		/*!< in: MariaDB table */
 {
   if (innodb_copy_stat_flags(innodb_table, create_info->table_options,
                              create_info->stats_auto_recalc, false))
+  {
     innodb_table->stats_sample_pages= create_info->stats_sample_pages;
+#ifdef BTR_CUR_HASH_ADAPT
+    innodb_ahi_enable(innodb_table, create_info->option_struct, table);
+#endif
+  }
 }
 
-/*********************************************************************//**
-Copy table flags from MySQL's TABLE_SHARE into an InnoDB table object.
+/**
+Copy table flags from MariaDB TABLE into an InnoDB table object.
 Those flags are stored in .frm file and end up in the MySQL table object,
 but are frequently used inside InnoDB so we keep their copies into the
-InnoDB table object. */
-void
-innobase_copy_frm_flags_from_table_share(
-/*=====================================*/
-	dict_table_t*		innodb_table,	/*!< in/out: InnoDB table */
-	const TABLE_SHARE*	table_share)	/*!< in: table share */
+InnoDB table object.
+@param innodb_table  InnoDB table
+@param table         MariaDB table handle */
+void innobase_copy_frm_flags_from_table(dict_table_t *innodb_table,
+                                        const TABLE *table) noexcept
 {
+  const TABLE_SHARE *const table_share{table->s};
   if (innodb_copy_stat_flags(innodb_table, table_share->db_create_options,
                              table_share->stats_auto_recalc,
                              innodb_table->stat_initialized()))
+  {
     innodb_table->stats_sample_pages= table_share->stats_sample_pages;
+#ifdef BTR_CUR_HASH_ADAPT
+    innodb_ahi_enable(innodb_table, table_share->option_struct_table, table);
+#endif
+  }
 }
 
 /*********************************************************************//**
@@ -3614,10 +3776,16 @@ static MYSQL_SYSVAR_UINT(log_write_ahead_size, log_sys.write_size,
 static void innodb_adaptive_hash_index_update(THD*, st_mysql_sys_var*, void*,
                                               const void *save) noexcept
 {
+  ulong option;
   /* Prevent a possible deadlock with innobase_fts_load_stopword() */
   mysql_mutex_unlock(&LOCK_global_system_variables);
-  if (*static_cast<const my_bool*>(save))
-    btr_search.enable();
+
+  option= *static_cast<const ulong*>(save);
+  if (option)
+  {
+    ut_ad(option <= ulong{AHI_IF_SPECIFIED});
+    btr_search.enable(false, ahi_status{option});
+  }
   else
     btr_search.disable();
   mysql_mutex_lock(&LOCK_global_system_variables);
@@ -4142,6 +4310,7 @@ static int innodb_init(void* p)
 
 	innobase_hton->tablefile_extensions = ha_innobase_exts;
 	innobase_hton->table_options = innodb_table_option_list;
+	innobase_hton->index_options = innodb_index_option_list;
 
 	/* System Versioning */
 	innobase_hton->prepare_commit_versioned
@@ -5887,7 +6056,7 @@ ha_innobase::open(const char* name, int, uint)
 		DBUG_RETURN(HA_ERR_CRASHED_ON_USAGE);
 	}
 
-	innobase_copy_frm_flags_from_table_share(ib_table, table->s);
+	innobase_copy_frm_flags_from_table(ib_table, table);
 
 	MONITOR_INC(MONITOR_TABLE_OPEN);
 
@@ -6065,7 +6234,7 @@ ha_innobase::open(const char* name, int, uint)
 	/* Set plugin parser for fulltext index */
 	for (uint i = 0; i < table->s->keys; i++) {
 		if (table->key_info[i].flags & HA_USES_PARSER) {
-			dict_index_t*	index = innobase_get_index(i);
+                        dict_index_t *index = innobase_get_index(i);
 			plugin_ref	parser = table->key_info[i].parser;
 
 			ut_ad(index->type & DICT_FTS);
@@ -11400,7 +11569,6 @@ create_table_info_t::check_table_options()
 			return "PAGE_COMPRESSION_LEVEL";
 		}
 	}
-
 	return NULL;
 }
 
@@ -13176,7 +13344,7 @@ void create_table_info_t::create_table_update_dict(dict_table_t *table,
 
   DBUG_ASSERT(!table->fts == !table->fts_doc_id_index);
 
-  innobase_copy_frm_flags_from_create_info(table, &info);
+  innobase_copy_frm_flags_from_create_info(table, &info, &t);
 
   /* Load server stopword into FTS cache */
   if (table->flags2 & DICT_TF2_FTS &&
@@ -17490,7 +17658,7 @@ ha_innobase::check_if_incompatible_data(
 	m_prebuilt->table->stats_mutex_lock();
 	if (!m_prebuilt->table->stat_initialized()) {
 		innobase_copy_frm_flags_from_create_info(
-			m_prebuilt->table, info);
+			m_prebuilt->table, info, table);
 	}
 	m_prebuilt->table->stats_mutex_unlock();
 
@@ -19384,10 +19552,45 @@ static MYSQL_SYSVAR_BOOL(stats_traditional, srv_stats_sample_traditional,
   NULL, NULL, TRUE);
 
 #ifdef BTR_CUR_HASH_ADAPT
-static MYSQL_SYSVAR_BOOL(adaptive_hash_index, *(my_bool*) &btr_search.enabled,
+/** Possible values for the variable adaptive_hash_index */
+const char* innodb_ahi_names[] = {
+	"OFF",
+        "ON",
+        "IF_SPECIFIED",
+        NullS
+};
+static_assert(AHI_OFF == 0, "Unexpected AHI_OFF value");
+static_assert(AHI_ON == 1, "Unexpected AHI_ON value");
+static_assert(AHI_IF_SPECIFIED == 2, "Unexpected AHI_IF_SPECIFIED value");
+static_assert(sizeof(ahi_status) == sizeof(ulong),
+              "Unexpected sizeof(ahi_status)");
+static_assert(sizeof(btr_sea::enabled) == sizeof(ulong),
+              "Unexpected sizeof(btr_sea::enabled)");
+static_assert(alignof(decltype(btr_sea::enabled)) == alignof(ulong),
+              "Unexpected alignof(decltype(btr_sea::enabled))");
+
+/** Used to define an enumerate type of the system variable
+innodb_adaptive_hash_index. */
+TYPELIB innodb_ahi_typelib =
+			CREATE_TYPELIB_FOR(innodb_ahi_names);
+
+/* btr_search.enabled has type Atomic_relaxed<ahi_status>, which shares
+the storage layout of ulong (checked by the static_asserts above).
+MYSQL_SYSVAR_ENUM requires a ulong lvalue, so we alias into btr_search.enabled
+through a may_alias typedef.  The attribute tells the compiler that accesses
+through this pointer type may alias any other type, which suppresses the
+spurious -Wstrict-aliasing diagnostic without disabling type-based alias
+analysis elsewhere. */
+typedef ulong ahi_enabled_ulong __attribute__((__may_alias__));
+
+static MYSQL_SYSVAR_ENUM(adaptive_hash_index,
+  *reinterpret_cast<ahi_enabled_ulong*>(&btr_search.enabled),
   PLUGIN_VAR_OPCMDARG,
-  "Enable InnoDB adaptive hash index (disabled by default)",
-  NULL, innodb_adaptive_hash_index_update, false);
+  "Enable InnoDB adaptive hash index. Values OFF (default), ON or "
+                         "IF_SPECIFIED (enabled only tables or indexes that "
+                         "have adaptive_hash_index=on)",
+                         NULL, innodb_adaptive_hash_index_update, false,
+                         &innodb_ahi_typelib);
 
 static MYSQL_SYSVAR_ULONG(adaptive_hash_index_parts, btr_search.n_parts,
   PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,

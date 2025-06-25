@@ -68,6 +68,9 @@
 #include "wsrep_var.h"            /* wsrep_hton_check() */
 #endif /* WITH_WSREP */
 
+/* Note that DEFAULT is handled automatically */
+const char *table_hint_options= "YES,NO";
+
 /**
   @def MYSQL_TABLE_LOCK_WAIT
   Instrumentation helper for table io_waits.

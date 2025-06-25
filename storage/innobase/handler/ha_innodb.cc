@@ -666,8 +666,22 @@ ha_create_table_option innodb_table_option_list[]=
   HA_TOPTION_ENUM("ENCRYPTED", encryption, "DEFAULT,YES,NO", 0),
   /* With this option the user defines the key identifier using for the encryption */
   HA_TOPTION_SYSVAR("ENCRYPTION_KEY_ID", encryption_key_id, default_encryption_key_id),
-
+  HA_TOPTION_ENUM("ADAPTIVE_HASH_INDEX", adaptive_hash_index,
+                  table_hint_options, 0),
   HA_TOPTION_END
+};
+
+
+ha_create_table_option innodb_index_option_list[]=
+{
+  HA_IOPTION_ENUM("ADAPTIVE_HASH_INDEX", adaptive_hash_index,
+                  table_hint_options, 0),
+  HA_IOPTION_NUMBER("COMPLETE_FIELDS", complete_fields, 0, 1, 32, 1),
+  HA_IOPTION_NUMBER("BYTES_FROM_INCOMPLETE_FIELDS",
+                    bytes_from_incomplete_fields, 0, 1, 8192, 1),
+  HA_IOPTION_BOOL("FOR_EQUAL_HASH_POINT_TO_LAST_RECORD",
+                  for_equal_hash_point_to_last_record, 0),
+  HA_IOPTION_END
 };
 
 /*************************************************************//**
@@ -2967,6 +2981,20 @@ innobase_copy_frm_flags_from_table_share(
                              table_share->stats_auto_recalc,
                              innodb_table->stat_initialized()))
     innodb_table->stats_sample_pages= table_share->stats_sample_pages;
+# ifdef BTR_CUR_HASH_ADAPT
+    /*
+      ahi_enabled is set to 0 if the user has disabled AHI index for this table
+      by setting adaptive_hash_index=yes, 1 if it should be enabled if global
+      ahi is enabled for all tables and 2 if ahi is marked as if_specified
+    */
+  if (!table_share->option_struct ||
+      table_share->option_struct->adaptive_hash_index == 0)
+    innodb_table->ahi_enabled= 1;               // Not defined, use default ahi setting
+  else if (table_share->option_struct->adaptive_hash_index == 1)
+    innodb_table->ahi_enabled= 2;               // Enabled for table
+  else
+    innodb_table->ahi_enabled= 0;               // Disabled by for table
+#endif
 }
 
 /*********************************************************************//**
@@ -3668,10 +3696,13 @@ static MYSQL_SYSVAR_UINT(log_write_ahead_size, log_sys.write_size,
 static void innodb_adaptive_hash_index_update(THD*, st_mysql_sys_var*, void*,
                                               const void *save) noexcept
 {
+  ulong option;
   /* Prevent a possible deadlock with innobase_fts_load_stopword() */
   mysql_mutex_unlock(&LOCK_global_system_variables);
-  if (*static_cast<const my_bool*>(save))
-    btr_search.enable();
+
+  option= *static_cast<const ulong*>(save);
+  if (option)
+    btr_search.enable(false, option);
   else
     btr_search.disable();
   mysql_mutex_lock(&LOCK_global_system_variables);
@@ -4152,6 +4183,7 @@ static int innodb_init(void* p)
 
 	innobase_hton->tablefile_extensions = ha_innobase_exts;
 	innobase_hton->table_options = innodb_table_option_list;
+	innobase_hton->index_options = innodb_index_option_list;
 
 	/* System Versioning */
 	innobase_hton->prepare_commit_versioned
@@ -6026,10 +6058,12 @@ ha_innobase::open(const char* name, int, uint)
 		initialize_auto_increment(m_prebuilt->table, *ai, *table->s);
 	}
 
-	/* Set plugin parser for fulltext index */
+	/* Set plugin parser for fulltext index and ahi */
 	for (uint i = 0; i < table->s->keys; i++) {
+          dict_index_t* index = 0;
+          uint8_t ahi;
 		if (table->key_info[i].flags & HA_USES_PARSER) {
-			dict_index_t*	index = innobase_get_index(i);
+                        index = innobase_get_index(i);
 			plugin_ref	parser = table->key_info[i].parser;
 
 			ut_ad(index->type & DICT_FTS);
@@ -6040,7 +6074,28 @@ ha_innobase::open(const char* name, int, uint)
 			DBUG_EXECUTE_IF("fts_instrument_use_default_parser",
 				index->parser = &fts_default_parser;);
 		}
+#ifdef BTR_CUR_HASH_ADAPT
+                /*
+                  Enable AHI if index option is 'yes' or if no index
+                  option is given and table level AHI is enabled
+                  See btre_sea::is_enabled() for usage of this.
+                */
+                ahi= 0;
+                if (table->key_info[i].option_struct->adaptive_hash_index == 0 &&
+                    ib_table->ahi_enabled)
+                  ahi= ib_table->ahi_enabled;    // 1 (default) or 2 (forced)
+                else if (table->key_info[i].option_struct->adaptive_hash_index == 1)
+                  ahi= 2;                       // Force index usage
+
+                if (ahi)
+                {
+                  if (!index)
+                    index = innobase_get_index(i);
+                  if (index)                    // Not primary key
+                    index->search_info.ahi_enabled= ahi;
+                }
 	}
+#endif /* BTR_CUR_HASH_ADAPT */
 
 	ut_ad(!m_prebuilt->table
 	      || table->versioned() == m_prebuilt->table->versioned());
@@ -11396,7 +11451,6 @@ create_table_info_t::check_table_options()
 			return "PAGE_COMPRESSION_LEVEL";
 		}
 	}
-
 	return NULL;
 }
 
@@ -19315,10 +19369,26 @@ static MYSQL_SYSVAR_BOOL(stats_traditional, srv_stats_sample_traditional,
   NULL, NULL, TRUE);
 
 #ifdef BTR_CUR_HASH_ADAPT
-static MYSQL_SYSVAR_BOOL(adaptive_hash_index, *(my_bool*) &btr_search.enabled,
+/** Possible values for the variable adaptive_hash_index */
+const char* innodb_ahi_names[] = {
+	"OFF",
+        "ON",
+        "IF_SPECIFIED",
+        NullS
+};
+
+/** Used to define an enumerate type of the system variable
+innodb_checksum_algorithm. */
+TYPELIB innodb_ahi_typelib =
+			CREATE_TYPELIB_FOR(innodb_ahi_names);
+
+static MYSQL_SYSVAR_ENUM(adaptive_hash_index, *(ulong*) &btr_search.enabled,
   PLUGIN_VAR_OPCMDARG,
-  "Enable InnoDB adaptive hash index (disabled by default)",
-  NULL, innodb_adaptive_hash_index_update, false);
+  "Enable InnoDB adaptive hash index. Values OFF (default), ON or "
+                         "IF_SPECIFIED (enabled only tables or indexes that "
+                         "have adaptive_hash_index=on)",
+                         NULL, innodb_adaptive_hash_index_update, false,
+                         &innodb_ahi_typelib);
 
 static MYSQL_SYSVAR_ULONG(adaptive_hash_index_parts, btr_search.n_parts,
   PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,

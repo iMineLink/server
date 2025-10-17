@@ -349,6 +349,7 @@ bool log_t::attach(log_file_t file, os_offset_t size) noexcept
       }
 # endif
       buf= static_cast<byte*>(ptr);
+      sql_print_information("MY InnoDB: log_t::attach(): calling writer update 1");
       writer_update(false);
 # ifdef HAVE_PMEM
       if (is_pmem)
@@ -390,6 +391,7 @@ bool log_t::attach(log_file_t file, os_offset_t size) noexcept
 
   TRASH_ALLOC(buf, buf_size);
   TRASH_ALLOC(flush_buf, buf_size);
+  sql_print_information("MY InnoDB: log_t::attach(): calling writer update 2");
   writer_update(false);
   memset_aligned<512>(checkpoint_buf, 0, write_size);
 
@@ -696,12 +698,17 @@ log_t::resize_start_status log_t::resize_start(os_offset_t size, void *thd)
           resize_log.close();
 
         resize_lsn.store(start_lsn, std::memory_order_relaxed);
+        sql_print_information("MY InnoDB: log_t::resize_start(): calling writer update");
         writer_update(true);
         log_resize_release();
 
         mysql_mutex_lock(&buf_pool.flush_list_mutex);
         lsn_t target_lsn= buf_pool.get_oldest_modification(0);
         mysql_mutex_unlock(&buf_pool.flush_list_mutex);
+        sql_print_information(
+          "MY InnoDB: Starting log resize from %lu to %lu bytes;"
+          " start LSN %lu, target LSN %lu",
+          file_size, size, start_lsn, target_lsn);
         buf_flush_ahead(start_lsn < target_lsn ? target_lsn + 1 : start_lsn,
                         false);
         return RESIZE_STARTED;
@@ -751,6 +758,7 @@ void log_t::resize_abort(void *thd) noexcept
     resize_initiator= nullptr;
     std::string path{get_log_file_path("ib_logfile101")};
     IF_WIN(DeleteFile(path.c_str()), unlink(path.c_str()));
+    sql_print_information("MY InnoDB: log_t::resize_abort(): calling writer update");
     writer_update(false);
   }
 
@@ -1221,6 +1229,8 @@ void log_t::writer_update(bool resizing) noexcept
   ut_ad(latch_have_wr());
   ut_ad(resizing == (resize_in_progress() > 1));
   writer= resizing ? log_writer_resizing : log_writer;
+  sql_print_information("MY InnoDB: log_t::writer_update(): writer %s",
+                        resizing ? "log_writer_resizing" : "log_writer");
   mtr_t::finisher_update();
 }
 
@@ -1336,10 +1346,32 @@ func_exit:
     DBUG_EXECUTE_IF("ib_log_checkpoint_avoid_hard", goto skip_checkpoint;);
     log_sys.latch.wr_unlock();
 
+    sql_print_information("MY InnoDB: log_checkpoint_margin() Waiting for"
+                          " checkpoint to free log space...");
     /* We must wait to prevent the tail of the log overwriting the head. */
     buf_flush_wait_flushed(std::min(sync_lsn, checkpoint + (1U << 20)));
+#if 1
     /* Sleep to avoid a thundering herd */
+    sql_print_information("MY InnoDB: log_checkpoint_margin() sleep 10ms");
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
+#else
+    {
+      /* Dirty reads */
+      const lsn_t lsn= log_sys.get_lsn();
+      const lsn_t checkpoint= log_sys.last_checkpoint_lsn;
+      const lsn_t sync_lsn= checkpoint + log_sys.max_checkpoint_age;
+      if (lsn <= sync_lsn)
+      {
+        /* Do nothing */
+      }
+      else
+      {
+        /* Sleep to avoid a thundering herd */
+        sql_print_information("MY InnoDB: log_checkpoint_margin() sleep 10ms");
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+    }
+#endif
   }
 }
 
@@ -1449,6 +1481,8 @@ wait_suspend_loop:
 
 	if (buf_page_cleaner_is_active) {
 		thread_name = "page cleaner thread";
+    sql_print_information(
+      "MY InnoDB: logs_empty_and_mark_files_at_shutdown() Waiting for the page cleaner to finish flushing pages... - WAKEUP FLUSHER");
 		pthread_cond_signal(&buf_pool.do_flush_list);
 		goto wait_suspend_loop;
 	}

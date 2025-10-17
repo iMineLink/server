@@ -80,7 +80,12 @@ static void row_mysql_delay_if_needed() noexcept
     const lsn_t lsn= log_sys.get_flushed_lsn();
     log_sys.latch.rd_unlock();
     if ((lsn - last) / 4 >= max_age / 5)
+	{
+	  sql_print_information(
+	  "MY InnoDB: Delaying DML for %lu microseconds to let purge catch up",
+	  delay);
       buf_flush_ahead(last + max_age / 5, false);
+	}
     purge_sys.wake_if_not_active();
     std::this_thread::sleep_for(std::chrono::microseconds(delay));
   }

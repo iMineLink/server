@@ -50,10 +50,12 @@ void mtr_t::finisher_update()
 #ifdef HAVE_PMEM
   if (log_sys.is_mmap())
   {
+    sql_print_information("MY InnoDB: mtr_t::finisher_update(): Using mmap");
     commit_logger= mtr_t::commit_log<true>;
     finisher= mtr_t::finish_writer<true>;
     return;
   }
+  sql_print_information("MY InnoDB: mtr_t::finisher_update(): Using pmem");
   commit_logger= mtr_t::commit_log<false>;
 #endif
   finisher= mtr_t::finish_writer<false>;
@@ -467,6 +469,12 @@ void mtr_t::commit_log(mtr_t *mtr, std::pair<lsn_t,page_flush_ahead> lsns)
     const lsn_t target_delta= max_age >= commit_age ? 0 : commit_age - max_age;
     const lsn_t target_lsn= last_checkpoint_lsn_dirty + target_delta;
 
+#if 0
+    sql_print_information(
+      "MY InnoDB: mtr_t::commit_log() Waiting for %s flush to LSN %lu",
+      lsns.second == PAGE_FLUSH_SYNC ? "sync" : lsns.second == PAGE_FLUSH_ASYNC ? "async" : "UNKNOWN", target_lsn);
+#endif
+
     buf_flush_ahead(target_lsn, furious);
   }
 }
@@ -493,6 +501,7 @@ void mtr_t::commit()
     std::pair<lsn_t,page_flush_ahead> lsns{do_write()};
     process_freed_pages();
 #ifdef HAVE_PMEM
+    // sql_print_information("MY InnoDB: mtr_t::commit(): calling commit_logger");
     commit_logger(this, lsns);
 #else
     commit_log<false>(this, lsns);

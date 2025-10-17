@@ -116,8 +116,12 @@ void buf_pool_t::page_cleaner_wakeup(bool for_LRU) noexcept
   if (!page_cleaner_idle())
   {
     if (for_LRU)
+    {
+      sql_print_information(
+        "MY InnoDB: page_cleaner_wakeup(): for_LRU and not idle");
       /* Ensure that the page cleaner is not in a timed wait. */
       pthread_cond_signal(&do_flush_list);
+    }
     return;
   }
   double dirty_pct= double(UT_LIST_GET_LEN(buf_pool.flush_list)) * 100.0 /
@@ -154,6 +158,8 @@ void buf_pool_t::page_cleaner_wakeup(bool for_LRU) noexcept
                           last_activity_count == srv_get_activity_count())) ||
       srv_max_buf_pool_modified_pct <= dirty_pct)
   {
+    sql_print_information(
+      "MY InnoDB: page_cleaner_wakeup(): waking up, for_LRU %d", for_LRU);
     page_cleaner_status-= PAGE_CLEANER_IDLE;
     pthread_cond_signal(&do_flush_list);
   }
@@ -1248,6 +1254,8 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
   static_assert(FIL_NULL > SRV_TMP_SPACE_ID, "consistency");
   static_assert(FIL_NULL > SRV_SPACE_ID_UPPER_BOUND, "consistency");
 
+  sql_print_information("MY InnoDB: buf_flush_LRU_list_batch(): Starting LRU batch flush");
+
   /* BUF_LRU_MIN_LEN (256) is too high value for low buffer pool(BP) size. For
   example, for BP size lower than 80M and 16 K page size, the limit is more than
   5% of total BP and for lowest BP 6M, it is 80% of the BP. Non-data objects
@@ -1399,6 +1407,18 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
                                  MONITOR_LRU_BATCH_SCANNED_PER_CALL,
                                  scanned);
   }
+
+  if (n)
+  {
+    sql_print_information("MY InnoDB: buf_flush_LRU_list_batch(): LRU batch flush completed: "
+                           "%zu pages scanned, %zu pages flushed, %zu pages evicted",
+                           scanned, n->flushed, n->evicted);
+  }
+  else
+  {
+    sql_print_information("MY InnoDB: buf_flush_LRU_list_batch(): LRU batch flush completed: "
+                           "%zu pages scanned", scanned);
+  }
 }
 
 /** Flush and move pages from LRU or unzip_LRU list to the free list.
@@ -1418,6 +1438,10 @@ static void buf_do_LRU_batch(ulint max, flush_counters_t *n) noexcept
   buf_lru_freed_page_count+= n->evicted;
   buf_lru_flush_page_count+= n->flushed;
   buf_pool.stat.n_pages_written+= n->flushed;
+
+  sql_print_information("MY InnoDB: buf_do_LRU_batch(): total %zu pages flushed, "
+                         "%zu pages evicted",
+                         buf_lru_flush_page_count, buf_lru_freed_page_count);
 }
 
 /** This utility flushes dirty blocks from the end of the flush_list.
@@ -1432,6 +1456,8 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
 
   mysql_mutex_assert_owner(&buf_pool.mutex);
   mysql_mutex_assert_owner(&buf_pool.flush_list_mutex);
+
+  sql_print_information("MY InnoDB: buf_do_flush_list_batch(): max %zu, lsn %lu", max_n, lsn);
 
   const auto neighbors= UT_LIST_GET_LEN(buf_pool.LRU) < BUF_LRU_OLD_MIN_LEN
     ? 0 : buf_pool.flush_neighbors;
@@ -1551,6 +1577,8 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
                                  scanned);
   }
 
+  sql_print_information("MY InnoDB: buf_do_flush_list_batch(): flushed %zu pages", count);
+
   return count;
 }
 
@@ -1599,6 +1627,7 @@ nothing_to_do:
     goto nothing_to_do;
   }
   buf_pool.flush_list_set_active();
+  sql_print_information("MY InnoDB: buf_flush_list_holding_mutex(): Starting flush_list batch");
   const ulint n_flushed= buf_do_flush_list_batch(max_n, lsn);
   if (n_flushed)
     buf_pool.stat.n_pages_written+= n_flushed;
@@ -1625,6 +1654,7 @@ static ulint buf_flush_list(ulint max_n= ULINT_UNDEFINED,
                             lsn_t lsn= LSN_MAX) noexcept
 {
   mysql_mutex_lock(&buf_pool.mutex);
+  sql_print_information("MY InnoDB: buf_flush_list(): max %zu, lsn %lu", max_n, lsn);
   ulint n= buf_flush_list_holding_mutex(max_n, lsn);
   mysql_mutex_unlock(&buf_pool.mutex);
   buf_dblwr.flush_buffered_writes();
@@ -1639,6 +1669,8 @@ bool buf_flush_list_space(fil_space_t *space, ulint *n_flushed) noexcept
 {
   const auto space_id= space->id;
   ut_ad(space_id < SRV_SPACE_ID_UPPER_BOUND);
+
+  sql_print_information("MY InnoDB: buf_flush_list_space(): space %u", space_id);
 
   bool may_have_skipped= false;
   ulint max_n_flush= srv_io_capacity;
@@ -1744,6 +1776,9 @@ done:
   else
     buf_dblwr.flush_buffered_writes();
 
+  sql_print_information("MY InnoDB: buf_flush_list_space(): flushed %zu pages",
+                        n_flush);
+
   return may_have_skipped;
 }
 
@@ -1756,6 +1791,8 @@ after releasing buf_pool.mutex.
 static ulint buf_flush_LRU(ulint max_n) noexcept
 {
   mysql_mutex_assert_owner(&buf_pool.mutex);
+
+  sql_print_information("MY InnoDB: buf_flush_LRU(): max %zu", max_n);
 
   flush_counters_t n;
   buf_do_LRU_batch(max_n, &n);
@@ -1959,6 +1996,8 @@ inline void log_t::write_checkpoint(lsn_t end_lsn) noexcept
     resize_target= 0;
     resize_lsn.store(0, std::memory_order_relaxed);
     resize_initiator= nullptr;
+    sql_print_information("MY InnoDB: log_t::write_checkpoint(): Resizing to "
+                          "%lu completed", resizing);
     writer_update(false);
   }
 
@@ -1966,12 +2005,22 @@ inline void log_t::write_checkpoint(lsn_t end_lsn) noexcept
 
   if (UNIV_LIKELY(resizing <= 1));
   else if (resizing > checkpoint_lsn)
+  {
+    sql_print_information("MY InnoDB: log_t::write_checkpoint(): Resizing to "
+                          "%lu deferred, checkpoint LSN=%lu",
+                          resizing, checkpoint_lsn);
     buf_flush_ahead(resizing, false);
+  }
   else if (resizing_completed)
     ib::info() << "Resized log to " << ib::bytes_iec{resizing_completed}
       << "; start LSN=" << resizing;
   else
+  {
+    sql_print_information("MY InnoDB: log_t::write_checkpoint(): Resizing to "
+                          "%lu completed at checkpoint LSN=%lu",
+                          resizing, checkpoint_lsn);
     buf_flush_ahead(end_lsn + 1, false);
+  }
 }
 
 /** Initiate a log checkpoint, discarding the start of the log.
@@ -2083,6 +2132,8 @@ static void buf_flush_wait(lsn_t lsn) noexcept
     {
       buf_flush_sync_lsn= lsn;
       buf_pool.page_cleaner_set_idle(false);
+      sql_print_information("MY InnoDB: buf_flush_wait(): "
+                            "sync_lsn updated to %lu - WAKEUP FLUSHER", buf_flush_sync_lsn.load());
       pthread_cond_signal(&buf_pool.do_flush_list);
       my_cond_wait(&buf_pool.done_flush_list,
                    &buf_pool.flush_list_mutex.m_mutex);
@@ -2110,6 +2161,9 @@ ATTRIBUTE_COLD void buf_flush_wait_flushed(lsn_t sync_lsn) noexcept
   ut_ad(sync_lsn < LSN_MAX);
   ut_ad(!srv_read_only_mode);
 
+  sql_print_information("MY InnoDB: buf_flush_wait_flushed(): up to " LSN_PF,
+                        sync_lsn);
+
   if (recv_recovery_is_on())
     recv_sys.apply(true);
 
@@ -2125,6 +2179,8 @@ ATTRIBUTE_COLD void buf_flush_wait_flushed(lsn_t sync_lsn) noexcept
       do
       {
         mysql_mutex_unlock(&buf_pool.flush_list_mutex);
+        sql_print_information("MY InnoDB: buf_flush_wait_flushed(): "
+                              "page cleaner inactive, doing sync flush");
         ulint n_pages= buf_flush_list(srv_max_io_capacity, sync_lsn);
         if (n_pages)
         {
@@ -2174,19 +2230,51 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
 
   DBUG_EXECUTE_IF("ib_log_checkpoint_avoid_hard", return;);
 
+#if 0
+  static Atomic_relaxed<ulint> last_ms= 0;
+  if (0 || !furious)
+  {
+    const ulint last_ms_val= last_ms.load();
+    const ulint now= ut_time_ms();
+    if (now < last_ms_val + 1000)
+    {
+      /* Limit the rate of flush requests to one per second. */
+      sql_print_information("MY InnoDB: buf_flush_ahead(): "
+                            "flush request ignored, last at %lu, now %lu",
+                            last_ms_val, now);
+      return;
+    }
+    else
+    {
+      sql_print_information("MY InnoDB: buf_flush_ahead(): "
+                            "flush request accepted at %lu",
+                            now);
+      last_ms= now;
+    }
+  }
+#endif
+
   Atomic_relaxed<lsn_t> &limit= furious
     ? buf_flush_sync_lsn : buf_flush_async_lsn;
 
   if (limit < lsn)
   {
     mysql_mutex_lock(&buf_pool.flush_list_mutex);
+    sql_print_information("MY InnoDB: buf_flush_ahead(): "
+                          "%s lsn current " LSN_PF ", requested " LSN_PF,
+                          furious ? "sync" : "async", limit.load(), lsn);
     if (limit < lsn)
     {
       limit= lsn;
       const bool was_idle= buf_pool.page_cleaner_idle();
       buf_pool.page_cleaner_set_idle(false);
+      sql_print_information("MY InnoDB: buf_flush_ahead(): %s lsn updated to "
+                            LSN_PF,
+                            furious ? "sync" : "async", limit.load());
       if (furious || was_idle)
       {
+        sql_print_information("MY InnoDB: buf_flush_ahead(): "
+                              "signaling page cleaner - WAKEUP FLUSHER");
         pthread_cond_signal(&buf_pool.do_flush_list);
       }
       if (furious)
@@ -2206,6 +2294,9 @@ static void buf_flush_sync_for_checkpoint(lsn_t lsn) noexcept
 {
   ut_ad(!srv_read_only_mode);
   mysql_mutex_assert_not_owner(&buf_pool.flush_list_mutex);
+
+  sql_print_information("MY InnoDB: buf_flush_sync_for_checkpoint(): "
+                        "lsn " LSN_PF, lsn);
 
   /* During furious flush, we need to keep generating free pages. Otherwise
   concurrent mtrs could be blocked holding latches for the pages to be flushed
@@ -2238,6 +2329,8 @@ static void buf_flush_sync_for_checkpoint(lsn_t lsn) noexcept
     mysql_mutex_unlock(&buf_pool.flush_list_mutex);
   }
 
+  sql_print_information("MY InnoDB: buf_flush_sync_for_checkpoint(): "
+                        "flushing to LSN " LSN_PF, lsn);
   if (ulint n_flushed= buf_flush_list(srv_max_io_capacity, lsn))
   {
     MONITOR_INC_VALUE_CUMULATIVE(MONITOR_FLUSH_SYNC_TOTAL_PAGE,
@@ -2360,6 +2453,15 @@ static ulint page_cleaner_flush_pages_recommendation(ulint last_pages_in,
 	ulint pct_for_lsn = cur_lsn < oldest_lsn
                 ? 0 : af_get_pct_for_lsn(cur_lsn - oldest_lsn);
 	time_t curr_time = time(nullptr);
+  sql_print_information("MY InnoDB: page_cleaner_flush_pages_recommendation(): "
+                        "cur_lsn=" LSN_PF " oldest_lsn=" LSN_PF
+                        " age=" LSN_PF " pct_for_lsn=%lu "
+                        " dirty_blocks=%lu dirty_pct=%.2f%%",
+                        cur_lsn, oldest_lsn,
+                        cur_lsn >= oldest_lsn
+                        ? cur_lsn - oldest_lsn : 0,
+                        pct_for_lsn,
+                        dirty_blocks, dirty_pct);
 	const double max_pct = srv_max_buf_pool_modified_pct;
 
 	if (!prev_lsn || !pct_for_lsn) {
@@ -2386,12 +2488,21 @@ static ulint page_cleaner_flush_pages_recommendation(ulint last_pages_in,
 
 func_exit:
 		page_cleaner.flush_pass++;
+
+    sql_print_information("MY InnoDB: page_cleaner_flush_pages_recommendation(): "
+                          "n_pages=%lu avg_page_rate=%lu lsn_avg_rate=%lu",
+                          n_pages, avg_page_rate, lsn_avg_rate);
+
 		return n_pages;
 	}
 
 	sum_pages += last_pages_in;
 
 	const ulint time_elapsed = std::max<ulint>(ulint(curr_time - prev_time), 1);
+
+  sql_print_information("MY InnoDB: page_cleaner_flush_pages_recommendation(): "
+                        "time_elapsed=%lu sum_pages=%lu",
+                        time_elapsed, sum_pages);
 
 	/* We update our variables every innodb_flushing_avg_loops
 	iterations to smooth out transition in workload. */
@@ -2467,6 +2578,12 @@ func_exit:
 		n_pages = srv_max_io_capacity;
 	}
 
+  sql_print_information("MY InnoDB: page_cleaner_flush_pages_recommendation(): "
+                        "n_pages=%lu, ulint(double(srv_io_capacity) * total_ratio)=%lu avg_page_rate=%lu pages_for_lsn=%lu",
+                        n_pages,
+                        ulint(double(srv_io_capacity) * total_ratio),
+                        avg_page_rate, pages_for_lsn);
+
 	MONITOR_SET(MONITOR_FLUSH_N_TO_FLUSH_REQUESTED, n_pages);
 
 	MONITOR_SET(MONITOR_FLUSH_N_TO_FLUSH_BY_AGE, pages_for_lsn);
@@ -2516,9 +2633,42 @@ static void buf_flush_page_cleaner() noexcept
 
   lsn_t lsn_limit;
   ulint last_activity_count= srv_get_activity_count();
+  ulint tm1= ut_time_ms();
+  ulint tm2= tm1;
+  ulint _dirty_blocks= UT_LIST_GET_LEN(buf_pool.flush_list);
+  double _dirty_pct= double(_dirty_blocks) * 100.0 /
+      double(UT_LIST_GET_LEN(buf_pool.LRU) + UT_LIST_GET_LEN(buf_pool.free));
+
+  const ulint tm0= tm1;
+  size_t __last_checkpoint_lsn= log_sys.last_checkpoint_lsn;
+
+  sql_print_information("MY InnoDB: buf_flush_page_cleaner(): started, "
+                        "srv_max_io_capacity=%lu, srv_io_capacity=%lu, "
+                        "srv_flush_sync=%d, "
+                        "srv_adaptive_flushing=%d, "
+                        "srv_max_buf_pool_modified_pct=%.2f%%, "
+                        "srv_max_dirty_pages_pct_lwm=%.2f%%, "
+                        "srv_adaptive_flushing_lwm=%.2f%%",
+                        srv_max_io_capacity, srv_io_capacity,
+                        srv_flush_sync,
+                        srv_adaptive_flushing,
+                        srv_max_buf_pool_modified_pct,
+                        srv_max_dirty_pages_pct_lwm,
+                        srv_adaptive_flushing_lwm);
 
   for (;;)
   {
+    tm2= ut_time_ms();
+    _dirty_blocks= UT_LIST_GET_LEN(buf_pool.flush_list);
+    _dirty_pct= double(_dirty_blocks) * 100.0 /
+      double(UT_LIST_GET_LEN(buf_pool.LRU) + UT_LIST_GET_LEN(buf_pool.free));
+    __last_checkpoint_lsn= log_sys.last_checkpoint_lsn;
+    sql_print_information("MY InnoDB: buf_flush_page_cleaner(): "
+                          "last_pages=%lu last_activity_count=%lu time_diff=%lu, dirty_blocks=%lu dirty_pct=%.2f%%, dt=%lu, last_checkpoint_lsn=%zu %lu %lu",
+                          last_pages, last_activity_count, tm2 - tm1, _dirty_blocks, _dirty_pct, tm2 - tm0, __last_checkpoint_lsn, (_dirty_blocks)*srv_page_size, tm2 - tm0);
+    tm1= tm2;
+
+
     DBUG_EXECUTE_IF("ib_page_cleaner_sleep",
     {
       std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -2533,6 +2683,9 @@ static void buf_flush_page_cleaner() noexcept
     if (UNIV_UNLIKELY(lsn_limit != 0) && UNIV_LIKELY(srv_flush_sync))
     {
     furious_flush:
+      sql_print_information("MY InnoDB: buf_flush_page_cleaner(): "
+                            "furious flush to LSN " LSN_PF,
+                            lsn_limit);
       buf_flush_sync_for_checkpoint(lsn_limit);
       last_pages= 0;
       set_timespec(abstime, 1);
@@ -2551,12 +2704,24 @@ static void buf_flush_page_cleaner() noexcept
       {
         buf_pool.LRU_warned_clear();
         /* We are idle; wait for buf_pool.page_cleaner_wakeup() */
+        sql_print_information("MY InnoDB: "
+                              "buf_flush_page_cleaner(): idle");
         my_cond_wait(&buf_pool.do_flush_list,
                      &buf_pool.flush_list_mutex.m_mutex);
       }
       else
+      {
+        const ulint _tm1= ut_time_ms();
+        sql_print_information("MY InnoDB: "
+                              "buf_flush_page_cleaner(): timed wait");
         my_cond_timedwait(&buf_pool.do_flush_list,
                           &buf_pool.flush_list_mutex.m_mutex, &abstime);
+        const ulint _tm2= ut_time_ms();
+        sql_print_information("MY InnoDB: "
+                              "buf_flush_page_cleaner(): "
+                              "timed wait done, waited %lu ms",
+                              _tm2 - _tm1);
+      }
     }
     set_timespec(abstime, 1);
 
@@ -2626,6 +2791,8 @@ static void buf_flush_page_cleaner() noexcept
       n= srv_max_io_capacity;
       os_aio_wait_until_no_pending_writes(false);
       mysql_mutex_lock(&buf_pool.mutex);
+      sql_print_information("MY InnoDB: buf_flush_page_cleaner(): "
+                            "eviction flush to generate free pages");
     LRU_flush:
       n= buf_flush_LRU(n);
       mysql_mutex_unlock(&buf_pool.mutex);
@@ -2703,6 +2870,10 @@ static void buf_flush_page_cleaner() noexcept
       soft_lsn_limit= LSN_MAX;
     background_flush:
       mysql_mutex_lock(&buf_pool.mutex);
+      sql_print_information("MY InnoDB: buf_flush_page_cleaner(): "
+                            "background flush to LSN " LSN_PF
+                            " dirty_pct=%.2f%% n=%lu",
+                            soft_lsn_limit, dirty_pct, n);
       n_flushed= buf_flush_list_holding_mutex(n, soft_lsn_limit);
       MONITOR_INC_VALUE_CUMULATIVE(MONITOR_FLUSH_BACKGROUND_TOTAL_PAGE,
                                    MONITOR_FLUSH_BACKGROUND_COUNT,
@@ -2715,6 +2886,10 @@ static void buf_flush_page_cleaner() noexcept
                                                          dirty_blocks,
                                                          dirty_pct)) != 0)
     {
+      sql_print_information("MY InnoDB: buf_flush_page_cleaner(): "
+                            "adaptive flush to LSN " LSN_PF
+                            " dirty_pct=%.2f%% n=%lu",
+                            oldest_lsn, dirty_pct, n);
       const ulint tm= ut_time_ms();
       mysql_mutex_lock(&buf_pool.mutex);
       last_pages= n_flushed= buf_flush_list_holding_mutex(n);
@@ -2759,6 +2934,9 @@ static void buf_flush_page_cleaner() noexcept
   {
   do_furious_flush:
     mysql_mutex_unlock(&buf_pool.flush_list_mutex);
+    sql_print_information("MY InnoDB: buf_flush_page_cleaner(): "
+                          "final furious flush to LSN " LSN_PF,
+                          lsn_limit);
     goto furious_flush;
   }
   buf_page_cleaner_is_active= false;

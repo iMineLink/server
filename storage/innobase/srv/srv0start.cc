@@ -2088,6 +2088,9 @@ void innodb_shutdown()
 		mysql_mutex_lock(&buf_pool.flush_list_mutex);
 		srv_shutdown_state = SRV_SHUTDOWN_CLEANUP;
 		while (buf_page_cleaner_is_active) {
+			sql_print_information(
+				"MY InnoDB: innodb_shutdown(): Waiting for page cleaner to"
+				" finish flushing pages...  - WAKEUP FLUSHER");
 			pthread_cond_signal(&buf_pool.do_flush_list);
 			my_cond_wait(&buf_pool.done_flush_list,
 				     &buf_pool.flush_list_mutex.m_mutex);

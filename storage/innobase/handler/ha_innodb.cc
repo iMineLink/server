@@ -248,7 +248,12 @@ static void innodb_max_purge_lag_wait_update(THD *thd, st_mysql_sys_var *,
     const lsn_t lsn= log_sys.get_lsn();
     log_sys.latch.wr_unlock();
     if ((lsn - last) / 4 >= max_age / 5)
+	{
+	  sql_print_information(
+	  "MY InnoDB: Delaying DML for %lu milliseconds to let purge catch up",
+	  100 * ((lsn - last) / max_age));
       buf_flush_ahead(last + max_age / 5, false);
+	}
     purge_sys.wake_if_not_active();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }

@@ -1596,6 +1596,8 @@ dispatch_command_return dispatch_command(enum enum_server_command command, THD *
                        "<?>")));
   bool drop_more_results= 0;
 
+  sql_print_information("MY dispatch_command(): %.*s", packet_length, packet);
+
   if (thd->async_state.m_state == thd_async_state::enum_async_state::RESUMED)
   {
     thd->async_state.m_state = thd_async_state::enum_async_state::NONE;
@@ -2521,6 +2523,7 @@ resume:
   /* Check that some variables are reset properly */
   DBUG_ASSERT(thd->abort_on_warning == 0);
   thd->lex->restore_set_statement_var();
+  sql_print_information("MY dispatch_command(): end");
   DBUG_RETURN(error?DISPATCH_COMMAND_CLOSE_CONNECTION: DISPATCH_COMMAND_SUCCESS);
 }
 

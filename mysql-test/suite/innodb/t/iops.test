@@ -1,0 +1,87 @@
+--source include/have_innodb.inc
+--source include/have_sequence.inc
+
+let restart_parameters=--innodb_buffer_pool_size_max=128m --innodb_buffer_pool_size=128m --innodb_log_file_size=64m;
+--source include/restart_mysqld.inc
+
+# Save original server settings
+SET @save_pct= @@GLOBAL.innodb_max_dirty_pages_pct;
+SET @save_pct_lwm= @@GLOBAL.innodb_max_dirty_pages_pct_lwm;
+SET @save_buffer_pool_size= @@GLOBAL.innodb_buffer_pool_size;
+
+# Set new settings for the test
+SET GLOBAL innodb_max_dirty_pages_pct_lwm= 75.000000;
+SET GLOBAL innodb_max_dirty_pages_pct= 90.000000;
+SET GLOBAL innodb_io_capacity= 100;
+SET GLOBAL innodb_io_capacity_max= 400;
+SET GLOBAL innodb_adaptive_flushing= ON;
+
+SET GLOBAL innodb_flush_log_at_trx_commit= 0;
+
+
+SET GLOBAL innodb_buffer_pool_size= 128*1024*1024;
+
+SHOW VARIABLES LIKE '%innodb%';
+
+#
+# Begin: Added commands to fill a table with ~6MiB of data
+#
+
+# Check InnoDB status
+SHOW ENGINE INNODB STATUS;
+
+# Create a simple test table
+CREATE TABLE t1 (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  data VARCHAR(1024)
+) ENGINE=InnoDB DEFAULT CHARSET=ascii;
+
+# Fill the table with >20MB of data.
+INSERT INTO t1 (data) SELECT REPEAT(MD5(RAND(5)), 32) FROM seq_1_to_20000;
+
+# Check status
+SHOW ENGINE INNODB STATUS;
+
+# Check count
+SELECT COUNT(*) FROM t1;
+
+# Check unique data
+SELECT COUNT(DISTINCT(data)) FROM t1;
+
+# Check first and last data
+SELECT * FROM t1 ORDER BY id ASC LIMIT 3;
+SELECT * FROM t1 ORDER BY id DESC LIMIT 3;
+
+# Check the table size in MiB
+ANALYZE TABLE t1;
+SELECT table_name, round(((data_length + index_length) / 1024 / 1024), 2) AS 'Size (MiB)' 
+FROM information_schema.TABLES 
+WHERE table_schema = DATABASE() AND table_name = 't1';
+
+#
+# End: Data loading commands
+#
+
+SELECT SLEEP(3);
+
+# Fill the table with >20MB of data.
+INSERT INTO t1 (data) SELECT REPEAT(MD5(RAND(5)), 32) FROM seq_1_to_20000;
+
+SELECT SLEEP(3);
+
+# Trigger furious flush
+
+# Fill the table with >60MB of data.
+INSERT INTO t1 (data) SELECT REPEAT(MD5(RAND(5)), 32) FROM seq_1_to_20000;
+# INSERT INTO t1 (data) SELECT REPEAT(MD5(RAND(5)), 32) FROM seq_1_to_20000;
+# INSERT INTO t1 (data) SELECT REPEAT(MD5(RAND(5)), 32) FROM seq_1_to_20000;
+
+SELECT SLEEP(5);
+
+# Clean up by dropping the test table
+DROP TABLE t1;
+
+# Restore original server settings
+SET GLOBAL innodb_max_dirty_pages_pct = @save_pct;
+SET GLOBAL innodb_max_dirty_pages_pct_lwm = @save_pct_lwm;
+SET GLOBAL innodb_buffer_pool_size = @save_buffer_pool_size;

@@ -1000,7 +1000,7 @@ static lsn_t log_close(lsn_t lsn) noexcept
   {
     int64_t delta= int64_t(checkpoint_age - log_sys.max_checkpoint_age);
     if (UNIV_LIKELY(delta <= 0))
-      return lsn - checkpoint_age - delta;
+      return lsn - log_sys.max_modified_age_async;
   }
 
   log_sys.set_check_for_checkpoint();

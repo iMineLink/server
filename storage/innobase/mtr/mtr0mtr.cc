@@ -347,15 +347,13 @@ ATTRIBUTE_NOINLINE void mtr_t::commit_log_release() noexcept
 }
 
 static ATTRIBUTE_NOINLINE ATTRIBUTE_COLD
-void mtr_flush_ahead(lsn_t lsn, lsn_t flush_lsn) noexcept
+void mtr_flush_ahead(lsn_t flush_lsn) noexcept
 {
-  ut_ad(lsn);
-  const bool furious{flush_lsn == mtr_t::FLUSH_AHEAD_FURIOUS};
-  if (UNIV_LIKELY(!furious))
-  {
-    ut_ad(lsn >= flush_lsn);
-    lsn= flush_lsn;
-  }
+  const bool furious{(flush_lsn & mtr_t::FLUSH_AHEAD_FURIOUS_BIT) ==
+    mtr_t::FLUSH_AHEAD_FURIOUS_BIT};
+  const lsn_t lsn{flush_lsn == mtr_t::FLUSH_AHEAD_FURIOUS_BIT ?
+      mtr_t::FLUSH_AHEAD_FURIOUS_BIT :
+      flush_lsn & ~mtr_t::FLUSH_AHEAD_FURIOUS_BIT};
   buf_flush_ahead(lsn, furious);
 }
 
@@ -467,7 +465,10 @@ void mtr_t::commit_log(mtr_t *mtr, std::pair<lsn_t,lsn_t> lsns) noexcept
   mariadb_increment_pages_updated(modified);
 
   if (UNIV_UNLIKELY(lsns.second != 0))
-    mtr_flush_ahead(mtr->m_commit_lsn, lsns.second);
+  {
+    ut_ad(lsns.second <= mtr->m_commit_lsn);
+    mtr_flush_ahead(lsns.second);
+  }
 }
 
 /** Commit a mini-transaction. */
@@ -982,13 +983,16 @@ std::pair<lsn_t,byte*> log_t::append_prepare(size_t size, bool ex) noexcept
 /** Finish appending data to the log.
 @param lsn  the end LSN of the log record
 @return lsn for invoking buf_flush_ahead() on
-@retval 0 if buf_flush_ahead() will not have to be invoked
-@retval mtr_t::FLUSH_AHEAD_FURIOUS if a furious buf_flush_ahead() is needed */
+        mtr_t::FLUSH_AHEAD_FURIOUS_BIT set if a furious buf_flush_ahead()
+        is needed
+@retval 0 if buf_flush_ahead() will not have to be invoked */
 static lsn_t log_close(lsn_t lsn) noexcept
 {
   ut_ad(log_sys.latch_have_any());
 
   const lsn_t checkpoint_age= lsn - log_sys.last_checkpoint_lsn;
+  lsn_t target_age;
+  bool furious;
 
   if (UNIV_UNLIKELY(checkpoint_age >= log_sys.log_capacity) &&
       /* silence message on create_log_file() after the log had been deleted */
@@ -998,13 +1002,42 @@ static lsn_t log_close(lsn_t lsn) noexcept
     return 0;
   else
   {
-    int64_t delta= int64_t(checkpoint_age - log_sys.max_checkpoint_age);
-    if (UNIV_LIKELY(delta <= 0))
-      return lsn - checkpoint_age - delta;
+    target_age= log_sys.max_checkpoint_age;
+    furious= false;
+    goto delta;
   }
 
   log_sys.set_check_for_checkpoint();
-  return mtr_t::FLUSH_AHEAD_FURIOUS;
+  target_age= log_sys.max_modified_age_async;
+  furious= true;
+
+delta:
+  if (checkpoint_age <= target_age)
+  {
+    /* Checkpoint age is not bigger than target age, nothing to do */
+    return 0;
+  }
+  else
+  {
+    ut_ad(lsn >= target_age);
+    lsn_t flush_lsn= lsn - target_age;
+    ut_ad(lsn - flush_lsn == target_age);
+    if (flush_lsn != mtr_t::FLUSH_AHEAD_FURIOUS_BIT)
+    {
+      /* Set first bit of flush LSN with the furious bit */
+      flush_lsn&= ~mtr_t::FLUSH_AHEAD_FURIOUS_BIT;
+      if (furious)
+      {
+        flush_lsn|= mtr_t::FLUSH_AHEAD_FURIOUS_BIT;
+      }
+    }
+    else
+    {
+      /* Flush LSN = 1 will be furiously flushed */
+    }
+    ut_ad(lsn >= flush_lsn);
+    return flush_lsn;
+  }
 }
 
 inline void mtr_t::page_checksum(const buf_page_t &bpage)

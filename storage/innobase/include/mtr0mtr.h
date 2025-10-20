@@ -645,9 +645,9 @@ public:
   /** Note that log_sys.latch is no longer being held exclusively. */
   void flag_wr_unlock() noexcept { ut_ad(m_latch_ex); m_latch_ex= false; }
 
-  /** A special value of flush_ahead_lsn to indicate that furious flushing
-  is needed in order to minimize waiting in log_free_check() */
-  static constexpr lsn_t FLUSH_AHEAD_FURIOUS= ~lsn_t{0};
+  /** The first bit of the LSN in flush_ahead_lsn indicates that furious
+   flushing is needed in order to minimize waiting in log_free_check() */
+  static constexpr lsn_t FLUSH_AHEAD_FURIOUS_BIT= lsn_t{0x1};
 
 private:
   /** Handle any pages that were freed during the mini-transaction. */

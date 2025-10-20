@@ -40,10 +40,10 @@ Created 11/26/1995 Heikki Tuuri
 #include "my_cpu.h"
 
 #ifdef HAVE_PMEM
-void (*mtr_t::commit_logger)(mtr_t *, std::pair<lsn_t,page_flush_ahead>);
+void (*mtr_t::commit_logger)(mtr_t *, std::pair<lsn_t,lsn_t>);
 #endif
 
-std::pair<lsn_t,mtr_t::page_flush_ahead> (*mtr_t::finisher)(mtr_t *, size_t);
+std::pair<lsn_t,lsn_t> (*mtr_t::finisher)(mtr_t *, size_t);
 
 void mtr_t::finisher_update()
 {
@@ -335,9 +335,32 @@ void mtr_t::release()
   m_memo.clear();
 }
 
+ATTRIBUTE_NOINLINE void mtr_t::commit_log_release() noexcept
+{
+  if (m_latch_ex)
+  {
+    log_sys.latch.wr_unlock();
+    m_latch_ex= false;
+  }
+  else
+    log_sys.latch.rd_unlock();
+}
+
+static ATTRIBUTE_NOINLINE ATTRIBUTE_COLD
+void mtr_flush_ahead(lsn_t lsn, lsn_t flush_lsn) noexcept
+{
+  ut_ad(lsn);
+  const bool furious{flush_lsn == mtr_t::FLUSH_AHEAD_FURIOUS};
+  if (UNIV_LIKELY(!furious))
+  {
+    ut_ad(lsn >= flush_lsn);
+    lsn= flush_lsn;
+  }
+  buf_flush_ahead(lsn, furious);
+}
+
 template<bool mmap>
-void mtr_t::commit_log(mtr_t *mtr, std::pair<lsn_t,page_flush_ahead> lsns)
-  noexcept
+void mtr_t::commit_log(mtr_t *mtr, std::pair<lsn_t,lsn_t> lsns) noexcept
 {
   size_t modified= 0;
 
@@ -378,25 +401,12 @@ void mtr_t::commit_log(mtr_t *mtr, std::pair<lsn_t,page_flush_ahead> lsns)
     buf_pool.page_cleaner_wakeup();
     mysql_mutex_unlock(&buf_pool.flush_list_mutex);
 
-    if (mtr->m_latch_ex)
-    {
-      log_sys.latch.wr_unlock();
-      mtr->m_latch_ex= false;
-    }
-    else
-      log_sys.latch.rd_unlock();
-
+    mtr->commit_log_release();
     mtr->release();
   }
   else
   {
-    if (mtr->m_latch_ex)
-    {
-      log_sys.latch.wr_unlock();
-      mtr->m_latch_ex= false;
-    }
-    else
-      log_sys.latch.rd_unlock();
+    mtr->commit_log_release();
 
     for (auto it= mtr->m_memo.rbegin(); it != mtr->m_memo.rend(); )
     {
@@ -456,8 +466,8 @@ void mtr_t::commit_log(mtr_t *mtr, std::pair<lsn_t,page_flush_ahead> lsns)
 
   mariadb_increment_pages_updated(modified);
 
-  if (UNIV_UNLIKELY(lsns.second != PAGE_FLUSH_NO))
-    buf_flush_ahead(mtr->m_commit_lsn, lsns.second == PAGE_FLUSH_SYNC);
+  if (UNIV_UNLIKELY(lsns.second != 0))
+    mtr_flush_ahead(mtr->m_commit_lsn, lsns.second);
 }
 
 /** Commit a mini-transaction. */
@@ -480,7 +490,7 @@ void mtr_t::commit()
     }
 
     ut_ad(!srv_read_only_mode);
-    std::pair<lsn_t,page_flush_ahead> lsns{do_write()};
+    std::pair<lsn_t,lsn_t> lsns{do_write()};
     process_freed_pages();
 #ifdef HAVE_PMEM
     commit_logger(this, lsns);
@@ -971,8 +981,10 @@ std::pair<lsn_t,byte*> log_t::append_prepare(size_t size, bool ex) noexcept
 
 /** Finish appending data to the log.
 @param lsn  the end LSN of the log record
-@return whether buf_flush_ahead() will have to be invoked */
-static mtr_t::page_flush_ahead log_close(lsn_t lsn) noexcept
+@return lsn for invoking buf_flush_ahead() on
+@retval 0 if buf_flush_ahead() will not have to be invoked
+@retval mtr_t::FLUSH_AHEAD_FURIOUS if a furious buf_flush_ahead() is needed */
+static lsn_t log_close(lsn_t lsn) noexcept
 {
   ut_ad(log_sys.latch_have_any());
 
@@ -983,12 +995,16 @@ static mtr_t::page_flush_ahead log_close(lsn_t lsn) noexcept
       checkpoint_age != lsn)
     log_overwrite_warning(lsn);
   else if (UNIV_LIKELY(checkpoint_age <= log_sys.max_modified_age_async))
-    return mtr_t::PAGE_FLUSH_NO;
-  else if (UNIV_LIKELY(checkpoint_age <= log_sys.max_checkpoint_age))
-    return mtr_t::PAGE_FLUSH_ASYNC;
+    return 0;
+  else
+  {
+    int64_t delta= int64_t(checkpoint_age - log_sys.max_checkpoint_age);
+    if (UNIV_LIKELY(delta <= 0))
+      return lsn - checkpoint_age - delta;
+  }
 
   log_sys.set_check_for_checkpoint();
-  return mtr_t::PAGE_FLUSH_SYNC;
+  return mtr_t::FLUSH_AHEAD_FURIOUS;
 }
 
 inline void mtr_t::page_checksum(const buf_page_t &bpage)
@@ -1034,7 +1050,7 @@ inline void mtr_t::page_checksum(const buf_page_t &bpage)
   m_log.close(l + 4);
 }
 
-std::pair<lsn_t,mtr_t::page_flush_ahead> mtr_t::do_write()
+std::pair<lsn_t,lsn_t> mtr_t::do_write() noexcept
 {
   ut_ad(!recv_no_log_write);
   ut_ad(is_logged());
@@ -1186,8 +1202,7 @@ inline void log_t::append(byte *&d, const void *s, size_t size) noexcept
 }
 
 template<bool mmap>
-std::pair<lsn_t,mtr_t::page_flush_ahead>
-mtr_t::finish_writer(mtr_t *mtr, size_t len)
+std::pair<lsn_t,lsn_t> mtr_t::finish_writer(mtr_t *mtr, size_t len)
 {
   ut_ad(log_sys.is_latest());
   ut_ad(!recv_no_log_write);

@@ -2545,7 +2545,7 @@ static void buf_flush_page_cleaner() noexcept
       _dirty_blocks,
       _t1 - _tprev,
       (int64_t)(_dirty_blocks - _dirty_blocks_prev),
-      (int64_t)(1000.0*(double)((int64_t)(_dirty_blocks - _dirty_blocks_prev))/(double)(_t1 - _tprev))
+      _t1 != _tprev ? (int64_t)(1000.0*(double)((int64_t)(_dirty_blocks - _dirty_blocks_prev))/(double)(_t1 - _tprev)) : 0
     );
     _tprev= _t1;
     _dirty_blocks_prev= _dirty_blocks;

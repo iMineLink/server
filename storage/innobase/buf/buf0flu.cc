@@ -2195,6 +2195,9 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
       {
         log_sys.set_check_for_checkpoint();
       wake:
+        sql_print_information(
+          "MY InnoDB: buf_flush_ahead(): lsn=%lu, furious=%d - do signal",
+        lsn, furious);
         buf_pool.page_cleaner_set_idle(false);
         pthread_cond_signal(&buf_pool.do_flush_list);
       }
@@ -2530,8 +2533,28 @@ static void buf_flush_page_cleaner() noexcept
   lsn_t lsn_limit;
   ulint last_activity_count= srv_get_activity_count();
 
+  const ulint _t0= ut_time_ms();
+  ulint _t1= _t0;
+  ulint _dirty_blocks= UT_LIST_GET_LEN(buf_pool.flush_list);
+  ulint _tprev= _t1;
+  ulint _dirty_blocks_prev= _dirty_blocks;
+
   for (;;)
   {
+    _t1= ut_time_ms();
+    _dirty_blocks= UT_LIST_GET_LEN(buf_pool.flush_list);
+    sql_print_information(
+      "MY InnoDB: buf_flush_page_cleaner(): "
+      "%5lu ms %5lu dirty_blocks (delta: %5lu ms %5ld dirty_blocks) [rate: %6ld dirty_blocks/s]",
+      _t1 - _t0,
+      _dirty_blocks,
+      _t1 - _tprev,
+      (int64_t)(_dirty_blocks - _dirty_blocks_prev),
+      _t1 != _tprev ? (int64_t)(1000.0*(double)((int64_t)(_dirty_blocks - _dirty_blocks_prev))/(double)(_t1 - _tprev)) : 0
+    );
+    _tprev= _t1;
+    _dirty_blocks_prev= _dirty_blocks;
+
     DBUG_EXECUTE_IF("ib_page_cleaner_sleep",
     {
       std::this_thread::sleep_for(std::chrono::seconds(1));

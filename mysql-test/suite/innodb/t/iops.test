@@ -1,0 +1,32 @@
+--source include/have_innodb.inc
+--source include/have_sequence.inc
+
+let restart_parameters=--innodb_buffer_pool_size_max=128m --innodb_buffer_pool_size=128m --innodb_log_file_size=64m;
+--source include/restart_mysqld.inc
+
+SET GLOBAL innodb_max_dirty_pages_pct_lwm= 75.000000;
+SET GLOBAL innodb_max_dirty_pages_pct= 90.000000;
+SET GLOBAL innodb_io_capacity= 100;
+SET GLOBAL innodb_io_capacity_max= 400;
+
+CREATE TABLE t1 (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  data VARCHAR(1024)
+) ENGINE=InnoDB DEFAULT CHARSET=ascii;
+
+INSERT INTO t1 (data) SELECT REPEAT(MD5(RAND(5)), 32) FROM seq_1_to_20000;
+
+SELECT SLEEP(3);
+
+INSERT INTO t1 (data) SELECT REPEAT(MD5(RAND(5)), 32) FROM seq_1_to_20000;
+
+SELECT SLEEP(3);
+
+# Trigger furious flush
+INSERT INTO t1 (data) SELECT REPEAT(MD5(RAND(5)), 32) FROM seq_1_to_20000;
+INSERT INTO t1 (data) SELECT REPEAT(MD5(RAND(5)), 32) FROM seq_1_to_20000;
+INSERT INTO t1 (data) SELECT REPEAT(MD5(RAND(5)), 32) FROM seq_1_to_20000;
+
+SELECT SLEEP(5);
+
+DROP TABLE t1;

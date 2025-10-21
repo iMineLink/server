@@ -2121,6 +2121,10 @@ ATTRIBUTE_COLD void buf_flush_wait_flushed(lsn_t sync_lsn) noexcept
   if (recv_recovery_is_on())
     recv_sys.apply(true);
 
+  sql_print_information(
+    "MY InnoDB: buf_flush_wait_flushed(): waiting for LSN " LSN_PF,
+    sync_lsn);
+
   mysql_mutex_lock(&buf_pool.flush_list_mutex);
 
   if (buf_pool.get_oldest_modification(sync_lsn) < sync_lsn)
@@ -2199,6 +2203,9 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
         /* Immediately wake up buf_flush_page_cleaner(), even when it
         is in the middle of a 1-second my_cond_timedwait(). */
       wake:
+        sql_print_information(
+          "MY InnoDB: buf_flush_ahead(): lsn=%lu, furious=%d - do signal",
+        lsn, furious);
         buf_pool.page_cleaner_set_idle(false);
         pthread_cond_signal(&buf_pool.do_flush_list);
       }
@@ -2539,8 +2546,28 @@ static void buf_flush_page_cleaner() noexcept
   lsn_t lsn_limit;
   ulint last_activity_count= srv_get_activity_count();
 
+  const ulint _t0= my_interval_timer();
+  ulint _t1= _t0;
+  ulint _dirty_blocks= UT_LIST_GET_LEN(buf_pool.flush_list);
+  ulint _tprev= _t1;
+  ulint _dirty_blocks_prev= _dirty_blocks;
+
   for (;;)
   {
+    _t1= my_interval_timer();
+    _dirty_blocks= UT_LIST_GET_LEN(buf_pool.flush_list);
+    sql_print_information(
+      "MY InnoDB: buf_flush_page_cleaner(): "
+      "%8lu us %5lu dirty_blocks (delta: %8lu us %5ld dirty_blocks) [rate: %7ld dirty_blocks/s]",
+      (_t1 - _t0) / 1000,
+      _dirty_blocks,
+      (_t1 - _tprev) / 1000,
+      (int64_t)(_dirty_blocks - _dirty_blocks_prev),
+      _t1 != _tprev ? (int64_t)(1e9*(double)((int64_t)(_dirty_blocks - _dirty_blocks_prev))/(double)(_t1 - _tprev)) : 0
+    );
+    _tprev= _t1;
+    _dirty_blocks_prev= _dirty_blocks;
+
     DBUG_EXECUTE_IF("ib_page_cleaner_sleep",
     {
       std::this_thread::sleep_for(std::chrono::seconds(1));

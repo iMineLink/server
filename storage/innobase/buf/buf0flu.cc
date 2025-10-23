@@ -2436,7 +2436,13 @@ func_exit:
 
 	sum_pages += last_pages_in;
 
-	const ulint time_elapsed = std::max<ulint>(ulint(curr_time - prev_time), 1);
+	ut_ad(curr_time >= prev_time);
+	const ulint time_elapsed = ulint(curr_time - prev_time);
+	if (time_elapsed == 0)
+	{
+		/* At least 1 second must pass between adaptive flush calls */
+		goto func_exit;
+	}
 
 	/* We update our variables every innodb_flushing_avg_loops
 	iterations to smooth out transition in workload. */

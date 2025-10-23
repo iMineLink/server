@@ -2436,12 +2436,16 @@ func_exit:
 
 	sum_pages += last_pages_in;
 
-	const ulint time_elapsed = std::max<ulint>(ulint(curr_time - prev_time), 1);
+	ut_ad(curr_time >= prev_time);
+	const ulint time_elapsed = ulint(curr_time - prev_time);
 
 	/* We update our variables every innodb_flushing_avg_loops
-	iterations to smooth out transition in workload. */
-	if (++n_iterations >= srv_flushing_avg_loops
-	    || time_elapsed >= srv_flushing_avg_loops) {
+	iterations to smooth out transition in workload.
+	Since this function can be called multiple times per second under
+	certain emergency-like conditions, make sure at least 1 second passed
+	as well before updating the metrics, to avoid distortions. */
+	if (time_elapsed > 0 && (++n_iterations >= srv_flushing_avg_loops
+	    || time_elapsed >= srv_flushing_avg_loops)) {
 
 		avg_page_rate = (sum_pages / time_elapsed + avg_page_rate) / 2;
 

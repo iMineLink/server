@@ -116,8 +116,12 @@ void buf_pool_t::page_cleaner_wakeup(bool for_LRU) noexcept
   if (!page_cleaner_idle())
   {
     if (for_LRU)
+    {
+      sql_print_information(
+        "MY InnoDB: buf_pool_t::page_cleaner_wakeup(): for_LRU - do signal");
       /* Ensure that the page cleaner is not in a timed wait. */
       pthread_cond_signal(&do_flush_list);
+    }
     return;
   }
   double dirty_pct= double(UT_LIST_GET_LEN(buf_pool.flush_list)) * 100.0 /
@@ -154,6 +158,10 @@ void buf_pool_t::page_cleaner_wakeup(bool for_LRU) noexcept
                           last_activity_count == srv_get_activity_count())) ||
       srv_max_buf_pool_modified_pct <= dirty_pct)
   {
+    sql_print_information(
+      "MY InnoDB: buf_pool_t::page_cleaner_wakeup(): "
+      "dirty_pct=%0.2f pct_lwm=%0.2f for_LRU=%d - do signal",
+      dirty_pct, pct_lwm, for_LRU);
     page_cleaner_status-= PAGE_CLEANER_IDLE;
     pthread_cond_signal(&do_flush_list);
   }
@@ -2091,6 +2099,9 @@ static void buf_flush_wait(lsn_t lsn) noexcept
     {
       buf_flush_sync_lsn= lsn;
       buf_pool.page_cleaner_set_idle(false);
+      sql_print_information(
+        "MY InnoDB: buf_flush_wait(): lsn=" LSN_PF " - do signal",
+        lsn);
       pthread_cond_signal(&buf_pool.do_flush_list);
       my_cond_wait(&buf_pool.done_flush_list,
                    &buf_pool.flush_list_mutex.m_mutex);
@@ -2137,6 +2148,10 @@ ATTRIBUTE_COLD void buf_flush_wait_flushed(lsn_t sync_lsn) noexcept
       do
       {
         mysql_mutex_unlock(&buf_pool.flush_list_mutex);
+        sql_print_information(
+          "MY InnoDB: buf_flush_wait_flushed(): "
+          "page cleaner inactive, doing direct flush to LSN " LSN_PF,
+          sync_lsn);
         ulint n_pages= buf_flush_list(srv_max_io_capacity, sync_lsn);
         if (n_pages)
         {
@@ -2600,6 +2615,8 @@ static void buf_flush_page_cleaner() noexcept
       {
         buf_pool.LRU_warned_clear();
         /* We are idle; wait for buf_pool.page_cleaner_wakeup() */
+        sql_print_information(
+          "MY InnoDB: buf_flush_page_cleaner(): idle - do wait");
         my_cond_wait(&buf_pool.do_flush_list,
                      &buf_pool.flush_list_mutex.m_mutex);
       }

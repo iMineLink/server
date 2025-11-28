@@ -160,7 +160,7 @@ buf_block_t *buf_page_optimistic_fix(buf_block_t *block, page_id_t id) noexcept
 /** Try to acquire a page latch after buf_page_optimistic_fix().
 @param block         buffer-fixed block
 @param rw_latch      RW_S_LATCH or RW_X_LATCH
-@param modify_clock  expected value of block->modify_clock
+@param modify_clock  expected value of block->modify_clock()
 @param mtr           mini-transaction
 @return block if the latch was acquired
 @retval nullptr if block->unfix() was called because it no longer is valid */
@@ -237,31 +237,6 @@ buf_page_create_deferred(uint32_t space_id, ulint zip_size, mtr_t *mtr,
 @param[in]	page	page number
 @param[in,out]	mtr	mini-transaction */
 void buf_page_free(fil_space_t *space, uint32_t page, mtr_t *mtr);
-
-/** Determine if a block is still close enough to the MRU end of the LRU list
-meaning that it is not in danger of getting evicted and also implying
-that it has been accessed recently.
-Note that this is for heuristics only and does not reserve buffer pool
-mutex.
-@param[in]	bpage		buffer pool page
-@return whether bpage is close to MRU end of LRU */
-inline bool buf_page_peek_if_young(const buf_page_t *bpage);
-
-/** Determine if a block should be moved to the start of the LRU list if
-there is danger of dropping from the buffer pool.
-@param[in]	bpage		buffer pool page
-@return true if bpage should be made younger */
-inline bool buf_page_peek_if_too_old(const buf_page_t *bpage);
-
-/********************************************************************//**
-Increments the modify clock of a frame by 1. The caller must (1) own the
-buf_pool.mutex and block bufferfix count has to be zero, (2) or own an x-lock
-on the block. */
-UNIV_INLINE
-void
-buf_block_modify_clock_inc(
-/*=======================*/
-	buf_block_t*	block);	/*!< in: block */
 
 /** Increment the pages_accessed count. */
 void buf_inc_get(trx_t *trx) noexcept;
@@ -377,6 +352,10 @@ buf_print_io(
 
 /** Refresh the statistics used to print per-second averages. */
 void buf_refresh_io_stats() noexcept;
+
+/** Invalidate all pages in the buffer pool.
+All pages must be in a replaceable state (not modified or latched). */
+void buf_pool_invalidate() noexcept;
 
 /*========================================================================
 --------------------------- LOWER LEVEL ROUTINES -------------------------
@@ -499,19 +478,23 @@ public:
 for compressed and uncompressed frames */
 
 class buf_pool_t;
+struct FetchIndexRootPages;
+class PageConverter;
 
 class buf_page_t
 {
   friend buf_pool_t;
   friend buf_block_t;
+  friend FetchIndexRootPages;
+  friend PageConverter;
 
   /** @name General fields */
   /* @{ */
 
-public: // FIXME: fix fil_iterate()
   /** Page id. Protected by buf_pool.page_hash.lock_get() when
   the page is in buf_pool.page_hash. */
   page_id_t id_;
+public:
   union {
     /** for in_file(): buf_pool.page_hash link;
     protected by buf_pool.page_hash.lock_get() */
@@ -536,6 +519,16 @@ private:
   2 if modifications are pending, but the block is not in buf_pool.flush_list
   (because id().space() is the temporary tablespace). */
   Atomic_relaxed<lsn_t> oldest_modification_;
+
+  /** buf_block_t::invalidate() will increment this field every time
+  a pointer to a record on the page may become obsolete for the quick path of
+  btr_cur_t::restore_position(). */
+  uint32_t modify_clock_low;
+  /** most significant part of the invalidate() counter */
+  uint16_t modify_clock_high;
+
+  /** time of the first access of an in_file() block in buf_pool; 0=never. */
+  Atomic_relaxed<uint16_t> access_time;
 
 public:
   /** state() of unused block (in buf_pool.free list) */
@@ -592,26 +585,9 @@ public:
   or if state() == MEMORY or state() == REMOVE_HASH. */
   UT_LIST_NODE_T(buf_page_t) list;
 
-	/** @name LRU replacement algorithm fields.
-	Protected by buf_pool.mutex. */
-	/* @{ */
+  /** member of buf_pool.LRU; protected by buf_pool.mutex */
+  UT_LIST_NODE_T(buf_page_t) LRU;
 
-	UT_LIST_NODE_T(buf_page_t) LRU;
-					/*!< node of the LRU list */
-	unsigned	old:1;		/*!< TRUE if the block is in the old
-					blocks in buf_pool.LRU_old */
-	unsigned	freed_page_clock:31;/*!< the value of
-					buf_pool.freed_page_clock
-					when this block was the last
-					time put to the head of the
-					LRU list; a thread is allowed
-					to read this for heuristic
-					purposes without holding any
-					mutex or latch */
-	/* @} */
-	Atomic_counter<unsigned> access_time;	/*!< time of first access, or
-					0 if the block was never accessed
-					in the buffer pool. */
   buf_page_t() : id_{0}
   {
     static_assert(NOT_USED == 0, "compatibility");
@@ -621,32 +597,37 @@ public:
   buf_page_t(const buf_page_t &b) :
     id_(b.id_), hash(b.hash),
     oldest_modification_(b.oldest_modification_),
+    modify_clock_low(b.modify_clock_low),
+    modify_clock_high(b.modify_clock_high),
+    access_time(b.access_time),
     lock() /* not copied */,
     frame(b.frame), zip(b.zip),
 #ifdef UNIV_DEBUG
     in_LRU_list(b.in_LRU_list),
     in_page_hash(b.in_page_hash), in_free_list(b.in_free_list),
 #endif /* UNIV_DEBUG */
-    list(b.list), LRU(b.LRU), old(b.old), freed_page_clock(b.freed_page_clock),
-    access_time(b.access_time)
+    list(b.list), LRU(b.LRU)
   {
     lock.init();
   }
 
   /** Initialize some more fields */
-  void init(uint32_t state, page_id_t id) noexcept
+  void init(uint32_t state, page_id_t id, uint16_t ssize) noexcept
   {
     ut_ad(state < REMOVE_HASH || state >= UNFIXED);
     ut_ad(!lock.is_locked_or_waiting());
     id_= id;
-    zip.fix.store(state, std::memory_order_release);
     oldest_modification_= 0;
     ut_d(in_free_list= false);
     ut_d(in_LRU_list= false);
     ut_d(in_page_hash= false);
-    old= 0;
-    freed_page_clock= 0;
+    /* modify_clock_low, modify_clock_high are intentionally not reset:
+    they must stay monotonic for the lifetime of the block descriptor,
+    so that a stale optimistic-restore comparison against a page that
+    was evicted and reloaded into this same slot cannot spuriously
+    match. */
     access_time= 0;
+    zip.clear(state, ssize);
   }
 
   void set_os_unused() const
@@ -824,22 +805,25 @@ public:
   /** @return the physical size, in bytes */
   ulint physical_size() const noexcept
   {
-    return zip.ssize ? (UNIV_ZIP_SIZE_MIN >> 1) << zip.ssize : srv_page_size;
+    const auto ssize= zip.ssize();
+    return ssize ? (UNIV_ZIP_SIZE_MIN >> 1) << ssize : srv_page_size;
   }
 
   /** @return the ROW_FORMAT=COMPRESSED physical size, in bytes
   @retval 0 if not compressed */
   ulint zip_size() const noexcept
   {
-    return zip.ssize ? (UNIV_ZIP_SIZE_MIN >> 1) << zip.ssize : 0;
+    const auto ssize= zip.ssize();
+    return ssize ? (UNIV_ZIP_SIZE_MIN >> 1) << ssize : 0;
   }
 
   /** @return the byte offset of the page within a file */
   os_offset_t physical_offset() const noexcept
   {
     os_offset_t o= id().page_no();
-    return zip.ssize
-      ? o << (zip.ssize + (UNIV_ZIP_SIZE_SHIFT_MIN - 1))
+    const auto ssize= zip.ssize();
+    return ssize
+      ? o << (ssize + (UNIV_ZIP_SIZE_SHIFT_MIN - 1))
       : o << srv_page_size_shift;
   }
 
@@ -852,32 +836,92 @@ public:
   /** @return whether the block has been flagged old in buf_pool.LRU */
   inline bool is_old() const noexcept;
   /** Set whether a block is old in buf_pool.LRU */
-  inline void set_old(bool old) noexcept;
-  /** Flag a page accessed in buf_pool
-  @return whether this is not the first access */
-  bool set_accessed() noexcept
-  {
-    if (is_accessed()) return true;
-    access_time= static_cast<uint32_t>(ut_time_ms());
-    return false;
-  }
-  /** @return ut_time_ms() at the time of first access of a block in buf_pool
+  template<bool old> inline void set_old() noexcept;
+  /** @return uint16_t(my_interval_timer() / 1e9) of first access of a
+  block in buf_pool
   @retval 0 if not accessed */
-  unsigned is_accessed() const noexcept
-  { ut_ad(in_file()); return access_time; }
+  inline uint16_t is_accessed() const noexcept { return access_time; }
+
+  /** Sentinel returned by modify_clock() once the 47-bit counter has
+  saturated. Outside the range of any non-saturated value (which lies in
+  [0, 2^47)) so a stored pre-saturation modify_clock can never falsely
+  equal it. Callers of restore_position() must also reject a stored value
+  equal to this sentinel (post-saturation stores produce identical values
+  across invalidations, breaking the optimistic-restore invariant). */
+  static constexpr uint64_t MODIFY_CLOCK_POISON= ~uint64_t{0};
+
+  /** @return whether the block's invalidate() counter has saturated and
+  modify_clock() will return MODIFY_CLOCK_POISON */
+  bool modify_clock_saturated() const noexcept
+  { return modify_clock_high & 0x8000; }
+
+  /** @return number of invalidate() calls, or MODIFY_CLOCK_POISON once
+  the counter has saturated (~2^47 invalidate() calls) */
+  uint64_t modify_clock() const noexcept
+  {
+    ut_ad(frame);
+    ut_ad(in_file());
+    ut_ad(lock.have_any());
+    if (UNIV_UNLIKELY(modify_clock_saturated()))
+      return MODIFY_CLOCK_POISON;
+    return modify_clock_low | uint64_t{modify_clock_high} << 32;
+  }
+
+  /** Compare a stored modify_clock against another modify_clock value for
+  optimistic restore. Rejects MODIFY_CLOCK_POISON on the stored side, so a
+  saturated counter never registers as a match; two snapshots taken after
+  saturation are indistinguishable, so a stored MODIFY_CLOCK_POISON must
+  never be treated as a hit.
+  @param current modify_clock value to compare against
+  @param stored  modify_clock value saved at store_position() time
+  @return whether the comparison succeeds */
+  static bool modify_clock_values_match(uint64_t current, uint64_t stored)
+    noexcept
+  {
+    if (UNIV_UNLIKELY(stored == MODIFY_CLOCK_POISON))
+      return false;
+    return current == stored;
+  }
+
+  /** Compare a stored modify_clock against the current one for optimistic
+  restore.
+  @param stored modify_clock value saved at store_position() time
+  @return whether the optimistic restore comparison succeeds */
+  bool modify_clock_matches(uint64_t stored) const noexcept
+  { return modify_clock_values_match(modify_clock(), stored); }
+
+  /** Mark the block invalid for optimistic btr_pcur_t::restore_position()
+  when a record is deleted or the page is reorganized or freed. */
+  inline void invalidate() noexcept;
+
+  /** Mark a block recently accessed, without updating access_time
+  (when we do not want to trigger read-ahead) */
+  void flag_accessed_only() noexcept { zip.set_accessed(); }
+
+  /** Mark the block as accessed
+  @return whether set_accessed() or flag_accessed() had already been invoked
+  on this block */
+  bool flag_accessed() noexcept;
+
+  /** Set the time of the first access
+  @return whether set_accessed() or flag_accessed() had already been invoked
+  on this block */
+  bool set_accessed() noexcept;
+
+  /** Clear flag_accessed_only() during a batch
+  @param now        uint16_t(my_interval_timer() / 1e9), or 0 if threshold
+                     is 0
+  @param threshold  buf_pool.LRU_old_time_threshold, read once by the
+                     caller together with now so that the two stay
+                     coherent with each other */
+  void make_young(uint16_t now, uint32_t threshold) noexcept;
 };
 
 /** The buffer control block structure */
 
 struct buf_block_t{
-
-	/** @name General fields */
-	/* @{ */
-
-	buf_page_t	page;		/*!< page information; this must
-					be the first field, so that
-					buf_pool.page_hash can point
-					to buf_page_t or buf_block_t */
+  /* page information; must be the first field */
+  buf_page_t page;
 #ifdef UNIV_DEBUG
   /** whether unzip_LRU is in buf_pool.unzip_LRU
   (in_file() && frame && zip.data);
@@ -886,22 +930,10 @@ struct buf_block_t{
 #endif
   /** member of buf_pool.unzip_LRU (if belongs_to_unzip_LRU()) */
   UT_LIST_NODE_T(buf_block_t) unzip_LRU;
-	/* @} */
-	/** @name Optimistic search field */
-	/* @{ */
 
-	ib_uint64_t	modify_clock;	/*!< this clock is incremented every
-					time a pointer to a record on the
-					page may become obsolete; this is
-					used in the optimistic cursor
-					positioning: if the modify clock has
-					not changed, we know that the pointer
-					is still valid; this field may be
-					changed if the thread (1) owns the
-					pool mutex and the page is not
-					bufferfixed, or (2) the thread has an
-					x-latch on the block */
-	/* @} */
+  /** @return number of invalidate() calls */
+  uint64_t modify_clock() const noexcept { return page.modify_clock(); }
+
 #ifdef BTR_CUR_HASH_ADAPT
   /** @name Hash search fields */
   /* @{ */
@@ -947,11 +979,15 @@ struct buf_block_t{
   ulint zip_size() const noexcept { return page.zip_size(); }
 
   /** Initialize the block.
-  @param page_id  page identifier
-  @param zip_size ROW_FORMAT=COMPRESSED page size, or 0
-  @param state    initial state() */
-  void initialise(const page_id_t page_id, ulint zip_size, uint32_t state)
+  @param page_id   page identifier
+  @param zip_ssize ROW_FORMAT=COMPRESSED page size shift, or 0
+  @param state     initial state() */
+  void initialise(const page_id_t page_id, uint16_t zip_ssize, uint32_t state)
     noexcept;
+
+  /** Mark the block invalid for optimistic btr_pcur_t::restore_position()
+  when a record is deleted or the page is reorganized or freed. */
+  void invalidate() noexcept { page.invalidate(); }
 
   /** Calculate the page frame address */
   IF_DBUG(,inline) byte *frame_address() const noexcept;
@@ -1103,12 +1139,10 @@ struct buf_pool_stat_t{
 	ulint	n_ra_pages_evicted;/*!< number of read ahead
 				pages that are evicted without
 				being accessed */
-	ulint	n_pages_made_young; /*!< number of pages made young, in
-				buf_page_make_young() */
+	ulint	n_pages_made_young; /*!< number of pages made young */
 	ulint	n_pages_not_made_young; /*!< number of pages not made
 				young because the first access
-				was not long enough ago, in
-				buf_page_peek_if_too_old() */
+				was not long enough ago */
 	/** number of waits for eviction */
 	ulint	LRU_waits;
 	ulint	LRU_bytes;	/*!< LRU size in bytes */
@@ -1665,24 +1699,32 @@ public:
     last_activity_count= activity_count;
   }
 
-	unsigned	freed_page_clock;/*!< a sequence number used
-					to count the number of buffer
-					blocks removed from the end of
-					the LRU list; NOTE that this
-					counter may wrap around at 4
-					billion! A thread is allowed
-					to read this for heuristic
-					purposes without holding any
-					mutex or latch */
+	/* @} */
+
+	/** @name LRU replacement algorithm fields */
+	/* @{ */
+
+
   /** Cleared when buf_LRU_get_free_block() fails.
   Set whenever the free list grows, along with a broadcast of done_free.
   Protected by buf_pool.mutex. */
   Atomic_relaxed<bool> try_LRU_scan;
 
-	/* @} */
+  /** innodb_old_blocks_time; 0 if disabled */
+  uint32_t LRU_old_time_threshold;
 
-	/** @name LRU replacement algorithm fields */
-	/* @{ */
+  /** @return uint16_t(my_interval_timer() / 1e9), for stamping or
+  comparing against buf_page_t::access_time */
+  static uint16_t now() noexcept;
+
+  /** Read LRU_old_time_threshold once, and skip the timer read when it
+  is 0, so that the two stay coherent with each other regardless of a
+  concurrent SET GLOBAL innodb_old_blocks_time.
+  @param[out] threshold  LRU_old_time_threshold
+  @param[out] now        buf_pool_t::now(), or 0 if threshold is 0
+  Pass both to buf_page_t::make_young(). */
+  void old_threshold_and_now(uint32_t &threshold, uint16_t &now)
+    const noexcept;
 
 private:
   /** Whether we have warned to be running out of buffer pool;
@@ -2027,11 +2069,11 @@ inline bool buf_page_t::is_old() const noexcept
   mysql_mutex_assert_owner(&buf_pool.mutex);
   ut_ad(in_file());
   ut_ad(in_LRU_list);
-  return old;
+  return zip.old();
 }
 
 /** Set whether a block is old in buf_pool.LRU */
-inline void buf_page_t::set_old(bool old) noexcept
+template<bool old> inline void buf_page_t::set_old() noexcept
 {
   mysql_mutex_assert_owner(&buf_pool.mutex);
   ut_ad(in_LRU_list);
@@ -2039,23 +2081,50 @@ inline void buf_page_t::set_old(bool old) noexcept
 #ifdef UNIV_LRU_DEBUG
   ut_a((buf_pool.LRU_old_len == 0) == (buf_pool.LRU_old == nullptr));
   /* If a block is flagged "old", the LRU_old list must exist. */
-  ut_a(!old || buf_pool.LRU_old);
+  ut_a(!zip.old() || buf_pool.LRU_old);
 
   if (UT_LIST_GET_PREV(LRU, this) && UT_LIST_GET_NEXT(LRU, this))
   {
     const buf_page_t *prev= UT_LIST_GET_PREV(LRU, this);
     const buf_page_t *next = UT_LIST_GET_NEXT(LRU, this);
-    if (prev->old == next->old)
-      ut_a(prev->old == old);
+    const bool prev_is_old{prev->zip.old()};
+    if (prev_is_old == next->zip.old())
+      ut_a(prev_is_old == old);
     else
     {
-      ut_a(!prev->old);
+      ut_a(!prev_is_old);
       ut_a(buf_pool.LRU_old == (old ? this : next));
     }
   }
 #endif /* UNIV_LRU_DEBUG */
 
-  this->old= old;
+  zip.set_old<old>();
+}
+
+inline void buf_page_t::invalidate() noexcept
+{
+  ut_ad(frame);
+  ut_ad(in_file());
+#ifdef SAFE_MUTEX
+  ut_ad((mysql_mutex_is_owner(&buf_pool.mutex) && !buf_fix_count()) ||
+        lock.have_u_or_x());
+#else /* SAFE_MUTEX */
+  ut_ad(!buf_fix_count() || lock.have_u_or_x());
+#endif /* SAFE_MUTEX */
+  assert_block_ahi_valid(reinterpret_cast<buf_block_t*>(this));
+  /* Once the 47-bit counter saturates (modify_clock_high bit 15 set) the
+  block is "stuck": modify_clock() returns MODIFY_CLOCK_POISON and no
+  further invalidate() work is needed. The optimistic restore comparator
+  must reject a stored value equal to MODIFY_CLOCK_POISON to avoid a
+  post-saturation false positive (any two snapshots after saturation are
+  equal). At ~1 M invalidate()/s on a single descriptor, saturation takes
+  on the order of 4 years, so the cold path is genuinely cold. The
+  increment of modify_clock_high tips the field straight from 0x7fff to
+  0x8000, setting the saturation MSB and making subsequent calls no-ops. */
+  if (UNIV_UNLIKELY(modify_clock_saturated()))
+    return;
+  if (!++modify_clock_low)
+    modify_clock_high++;
 }
 
 /**********************************************************************
@@ -2091,7 +2160,7 @@ inline buf_page_t *LRUItr::start() noexcept
 {
   mysql_mutex_assert_owner(m_mutex);
 
-  if (!m_hp || m_hp->old)
+  if (!m_hp || m_hp->zip.old())
     m_hp= UT_LIST_GET_LAST(buf_pool.LRU);
 
   return m_hp;
@@ -2138,7 +2207,4 @@ struct	CheckUnzipLRUAndLRUList {
 	}
 };
 #endif /* UNIV_DEBUG */
-
-#include "buf0buf.inl"
-
 #endif /* !UNIV_INNOCHECKSUM */

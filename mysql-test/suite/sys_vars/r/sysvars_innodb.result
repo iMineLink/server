@@ -1215,7 +1215,7 @@ SESSION_VALUE	NULL
 DEFAULT_VALUE	1000
 VARIABLE_SCOPE	GLOBAL
 VARIABLE_TYPE	INT UNSIGNED
-VARIABLE_COMMENT	Move blocks to the 'new' end of the buffer pool if the first access was at least this many milliseconds ago. The timeout is disabled if 0
+VARIABLE_COMMENT	Move blocks to the 'new' end of the buffer pool if the first access was at least this many milliseconds ago, rounded down to whole seconds. The timeout is disabled below 1000
 NUMERIC_MIN_VALUE	0
 NUMERIC_MAX_VALUE	4294967295
 NUMERIC_BLOCK_SIZE	0

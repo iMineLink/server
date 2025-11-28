@@ -92,6 +92,15 @@ static buf_page_t *buf_page_init_for_read(const page_id_t page_id,
     return reinterpret_cast<buf_page_t*>(uintptr_t(hash_page) | 1);
   }
 
+  zip_size&= ~1;
+  uint16_t ssize= 0;
+  if (zip_size)
+  {
+    for (ssize= 1; zip_size > (512U << ssize); ssize++) {}
+    ut_ad(ssize < 1U << PAGE_ZIP_SSIZE_BITS);
+    ut_ad(zip_size == 512U << ssize);
+  }
+
   if (UNIV_UNLIKELY(mysql_mutex_trylock(&buf_pool.mutex)))
   {
     hash_lock.unlock();
@@ -105,13 +114,11 @@ static buf_page_t *buf_page_init_for_read(const page_id_t page_id,
     }
   }
 
-  zip_size&= ~1;
-
   if (UNIV_LIKELY(bpage != nullptr))
   {
     block= nullptr;
     reinterpret_cast<buf_block_t*>(bpage)->
-      initialise(page_id, zip_size & ~1, READ_BUF_FIX);
+      initialise(page_id, ssize, READ_BUF_FIX);
     /* x_unlock() will be invoked
     in buf_page_t::read_complete() by the io-handler thread. */
     bpage->lock.x_lock(true);
@@ -141,10 +148,11 @@ static buf_page_t *buf_page_init_for_read(const page_id_t page_id,
   else
   {
     hash_lock.unlock();
-    /* The compressed page must be allocated before the
-    control block (bpage), in order to avoid the
-    invocation of buf_buddy_relocate_block() on
-    uninitialized data. */
+    ut_ad(ut_is_2pow(zip_size));
+
+    /* The ROW_FORMAT=COMPRESSED page must be allocated before the
+    block descriptor bpage in order to avoid the invocation of
+    buf_buddy_relocate_block() on uninitialized data. */
     bool lru= false;
     void *data= buf_buddy_alloc(zip_size, &lru);
 
@@ -167,16 +175,13 @@ static buf_page_t *buf_page_init_for_read(const page_id_t page_id,
 
     bpage= static_cast<buf_page_t*>(ut_zalloc_nokey(sizeof *bpage));
 
-    page_zip_des_init(&bpage->zip);
-    page_zip_set_size(&bpage->zip, zip_size);
-    bpage->zip.data = (page_zip_t*) data;
-
     /* Because bpage is a compressed-only block descriptor, it cannot be
     passed to buf_pool.page_guess(), and therefore there is no risk of a
     a false match. Therefore, we can safely initialize bpage before
     acquiring hash_lock. */
     bpage->lock.init();
-    bpage->init(READ_BUF_FIX, page_id);
+    bpage->init(READ_BUF_FIX, page_id, ssize);
+    bpage->zip.data= static_cast<page_zip_t*>(data);
     bpage->lock.x_lock(true);
 
     hash_lock.lock();
@@ -451,8 +456,21 @@ ulint buf_read_ahead_random(const page_id_t page_id) noexcept
     transactional_shared_lock_guard<page_hash_latch> g
       {buf_pool.page_hash.lock_get(chain)};
     if (const buf_page_t *bpage= buf_pool.page_hash.get(i, chain))
-      if (bpage->is_accessed() && buf_page_peek_if_young(bpage) && !--count)
+    {
+      const auto state= bpage->zip.get_state();
+      /* zip.is_accessed() alone is not enough: flag_accessed_only() sets
+      the same bit for internal traversal (B-tree/R-tree descent, MVCC
+      undo lookups) that must never count toward read-ahead, and it never
+      stamps access_time. Requiring is_accessed() (access_time != 0)
+      excludes those. zip.is_accessed() is still needed alongside it to
+      catch a genuinely fresh access, already stamped by flag_accessed(),
+      that has not yet been promoted out of the old sublist by the next
+      sweep. */
+      if (bpage->is_accessed() &&
+          (bpage->zip.is_accessed(state) || !bpage->zip.old(state)) &&
+          !--count)
         goto read_ahead;
+    }
   }
 
 no_read_ahead:
@@ -729,9 +747,13 @@ failed:
     pool at the time of a linear access pattern, the first access
     times may be nonmonotonic, even though the latest access times
     were linear. The threshold (srv_read_ahead_factor) should help a
-    little against this. */
-    bool fail= prev_accessed &&
-      (descending ? prev_accessed > accessed : prev_accessed < accessed);
+    little against this.
+
+    access_time wraps around every 65536 seconds, so the comparison is
+    done on the signed difference, not on the raw stamps, to stay
+    correct across that wrap (compare buf_page_t::make_young()). */
+    const int16_t delta= int16_t(uint16_t(accessed) - uint16_t(prev_accessed));
+    bool fail= prev_accessed && (descending ? delta < 0 : delta > 0);
     prev_accessed= accessed;
     if (fail)
       goto failed;

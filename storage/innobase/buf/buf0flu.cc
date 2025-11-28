@@ -1261,6 +1261,46 @@ static void buf_flush_discard_page(buf_page_t *bpage) noexcept
   buf_LRU_free_page(bpage, true);
 }
 
+void buf_page_t::make_young(uint16_t now, uint32_t threshold) noexcept
+{
+  mysql_mutex_assert_owner(&buf_pool.mutex);
+  ut_ad(in_file());
+
+  if (!is_old())
+    return;
+
+  /* threshold == 0 means innodb_old_blocks_time is disabled: zero ms of
+  probation is trivially satisfied, so promote on the first observed
+  access. Otherwise a block in LRU_old is promoted only once its age
+  (elapsed time since its first access) is at least the probation window,
+  and it re-earns that window every time it falls back into LRU_old.
+
+  The age is computed as uint16_t(now - access_time), not compared as
+  the two raw stamps, because access_time wraps around every 65536
+  seconds (18.2 hours): comparing raw stamps breaks across that wrap,
+  while the subtraction stays correct modulo 2^16. */
+  if (threshold)
+  {
+    /* access_time == 0 means no access has ever been stamped (a fresh
+    block, one only touched via flag_accessed_only(), or one that was
+    just made young), so there is not yet enough information to decide
+    on promotion; keep it on probation rather than let uint16_t(now - 0)
+    stand in for its age. */
+    if (!access_time || uint16_t(now - access_time) < threshold / 1000)
+    {
+      buf_pool.stat.n_pages_not_made_young++;
+      return;
+    }
+  }
+  else
+    /* Callers skip the timer read and pass a placeholder when the
+    threshold is 0, because this branch never inspects "now". */
+    ut_ad(now == 0);
+
+  access_time= 0;
+  buf_page_make_young(this);
+}
+
 /** Adjust to_withdraw during buf_pool_t::shrink() */
 ATTRIBUTE_COLD static size_t buf_flush_LRU_to_withdraw(size_t to_withdraw,
                                                        const buf_page_t &bpage)
@@ -1307,6 +1347,9 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
   page less than 5% of BP. */
   const size_t buf_lru_min_len=
     std::min((buf_pool.usable_size()) / 20 - 1, size_t{BUF_LRU_MIN_LEN});
+  uint32_t threshold;
+  uint16_t now;
+  buf_pool.old_threshold_and_now(threshold, now);
 
   for (buf_page_t *bpage= UT_LIST_GET_LAST(buf_pool.LRU);
        bpage &&
@@ -1318,6 +1361,13 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
   {
     buf_page_t *prev= UT_LIST_GET_PREV(LRU, bpage);
     buf_pool.lru_hp.set(prev);
+
+    if (bpage->zip.was_accessed())
+    {
+      bpage->make_young(now, threshold);
+      continue;
+    }
+
     auto state= bpage->state();
     ut_ad(state >= buf_page_t::FREED);
     ut_ad(bpage->in_LRU_list);
@@ -1488,6 +1538,10 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
   static_assert(FIL_NULL > SRV_TMP_SPACE_ID, "consistency");
   static_assert(FIL_NULL > SRV_SPACE_ID_UPPER_BOUND, "consistency");
 
+  uint32_t threshold;
+  uint16_t now;
+  buf_pool.old_threshold_and_now(threshold, now);
+
   /* Start from the end of the list looking for a suitable block to be
   flushed. */
   ulint len= UT_LIST_GET_LEN(buf_pool.flush_list);
@@ -1499,6 +1553,9 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
     if (oldest_modification >= lsn)
       break;
     ut_ad(bpage->in_file());
+
+    if (bpage->zip.was_accessed())
+      bpage->make_young(now, threshold);
 
     {
       buf_page_t *prev= UT_LIST_GET_PREV(list, bpage);
@@ -2627,6 +2684,7 @@ static void buf_flush_page_cleaner() noexcept
 
       if (!buf_pool.need_LRU_eviction())
         continue;
+      set_timespec(abstime, 1);
       mysql_mutex_lock(&buf_pool.flush_list_mutex);
       oldest_lsn= buf_pool.get_oldest_modification(0);
     }
@@ -2765,10 +2823,17 @@ static void buf_flush_page_cleaner() noexcept
                                                          dirty_blocks,
                                                          dirty_pct)) != 0)
     {
-      const ulint tm= ut_time_ms();
       mysql_mutex_lock(&buf_pool.mutex);
       last_pages= n_flushed= buf_flush_list_holding_mutex(n);
-      page_cleaner.flush_time+= ut_time_ms() - tm;
+      timespec finish;
+      set_timespec(finish, 0);
+      /* abstime was captured upstream with a +1s offset (it doubles as a
+      cond_timedwait deadline). To recover the actual elapsed time we add
+      that 1000 ms back: (finish - abstime) = elapsed - 1000, so the +1000
+      cancels the offset and the sum is the true flush duration in ms. */
+      page_cleaner.flush_time+=
+        ulint((finish.MY_tv_sec - abstime.MY_tv_sec) * 1000 +
+              (finish.MY_tv_nsec - abstime.MY_tv_nsec) / 1000000 + 1000);
       MONITOR_INC_VALUE_CUMULATIVE(MONITOR_FLUSH_ADAPTIVE_TOTAL_PAGE,
                                    MONITOR_FLUSH_ADAPTIVE_COUNT,
                                    MONITOR_FLUSH_ADAPTIVE_PAGES,

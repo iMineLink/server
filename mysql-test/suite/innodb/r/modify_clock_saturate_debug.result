@@ -1,0 +1,34 @@
+#
+# MDEV-33966 buf_page_t::modify_clock saturation
+#
+# ib_modify_clock_saturate_low makes buf_page_t::init() seed the
+# counter at its real (1 << 48) - 1 ceiling, so every block is
+# born saturated instead of taking years of invalidate() calls to
+# get there. invalidate() itself still compares against the real
+# ceiling; it is given no test-only ceiling of its own.
+# ib_modify_clock_saturate_log prints when invalidate() finds the
+# counter at that ceiling and leaves it alone, and separately
+# when modify_clock_values_match() rejects a stored reading of it
+# (forcing btr_pcur_t::restore_position() onto the pessimistic
+# path). A multi-row INSERT drives real page splits, and the
+# following statements drive restore_position() calls; check that
+# both events are observed, and that results stay correct
+# throughout despite the forced saturation and pessimistic
+# fallback.
+#
+SET @save_dbug= @@debug_dbug;
+SET debug_dbug="+d,ib_modify_clock_saturate_low,ib_modify_clock_saturate_log";
+CREATE TABLE t1 (a INT PRIMARY KEY, b INT) ENGINE=InnoDB;
+INSERT INTO t1 SELECT seq, seq FROM seq_1_to_5000;
+SELECT COUNT(*), SUM(a), SUM(b) FROM t1;
+COUNT(*)	SUM(a)	SUM(b)
+5000	12502500	12502500
+UPDATE t1 SET b = b + 1;
+DELETE FROM t1 WHERE a % 3 = 0;
+SET debug_dbug= @save_dbug;
+# Correct results despite invalidate() freezing early and every
+# later restore having been forced onto the pessimistic path.
+SELECT COUNT(*), SUM(a), SUM(b) FROM t1;
+COUNT(*)	SUM(a)	SUM(b)
+3334	8336667	8340001
+DROP TABLE t1;

@@ -1,0 +1,57 @@
+--source include/have_innodb.inc
+--source include/have_sequence.inc
+--source include/have_debug.inc
+--source include/not_embedded.inc
+
+--echo #
+--echo # MDEV-33966 buf_page_t::modify_clock saturation
+--echo #
+--echo # ib_modify_clock_saturate_low makes buf_page_t::init() seed the
+--echo # counter at its real (1 << 48) - 1 ceiling, so every block is
+--echo # born saturated instead of taking years of invalidate() calls to
+--echo # get there. invalidate() itself still compares against the real
+--echo # ceiling; it is given no test-only ceiling of its own.
+--echo # ib_modify_clock_saturate_log prints when invalidate() finds the
+--echo # counter at that ceiling and leaves it alone, and separately
+--echo # when modify_clock_values_match() rejects a stored reading of it
+--echo # (forcing btr_pcur_t::restore_position() onto the pessimistic
+--echo # path). A multi-row INSERT drives real page splits, and the
+--echo # following statements drive restore_position() calls; check that
+--echo # both events are observed, and that results stay correct
+--echo # throughout despite the forced saturation and pessimistic
+--echo # fallback.
+--echo #
+
+--let SEARCH_FILE= $MYSQLTEST_VARDIR/log/mysqld.1.err
+
+# Enable the keywords before CREATE TABLE, so that the index root page
+# is seeded along with everything the insert materializes.
+SET @save_dbug= @@debug_dbug;
+SET debug_dbug="+d,ib_modify_clock_saturate_low,ib_modify_clock_saturate_log";
+
+CREATE TABLE t1 (a INT PRIMARY KEY, b INT) ENGINE=InnoDB;
+INSERT INTO t1 SELECT seq, seq FROM seq_1_to_5000;
+SELECT COUNT(*), SUM(a), SUM(b) FROM t1;
+UPDATE t1 SET b = b + 1;
+DELETE FROM t1 WHERE a % 3 = 0;
+SET debug_dbug= @save_dbug;
+
+# The exact number of saturated blocks and of rejected restores depends
+# on how many pages the insert materializes and how many
+# restore_position() calls the plan happens to make (page size, purge
+# and row-count heuristics), so only assert that each happened at least
+# once; do not record the exact counts.
+--let SEARCH_ABORT= NOT FOUND
+--disable_result_log
+--let SEARCH_PATTERN= invalidate\(\) reached modify_clock max
+--source include/search_pattern_in_file.inc
+
+--let SEARCH_PATTERN= modify_clock_values_match rejecting saturated value
+--source include/search_pattern_in_file.inc
+--enable_result_log
+
+--echo # Correct results despite invalidate() freezing early and every
+--echo # later restore having been forced onto the pessimistic path.
+SELECT COUNT(*), SUM(a), SUM(b) FROM t1;
+
+DROP TABLE t1;

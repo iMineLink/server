@@ -134,6 +134,7 @@ public:
        We don't have to check if index->search_info.ahi_enabled != 0
        as the test enabled <= ahi_enabled will not be true in this case.
     */
+    const ulong enabled{get_enabled()};
     return (unlikely(enabled != 0) &&
             enabled <= index->search_info.ahi_enabled);
   }
@@ -143,11 +144,12 @@ public:
   */
   inline bool may_be_enabled(const dict_index_t *index) const noexcept
   {
+    const ulong enabled{get_enabled()};
     return (unlikely(enabled != 0) &&
             (!index || enabled <= index->search_info.ahi_enabled));
   }
 
-  inline ulong get_enabled() { return enabled; }
+  inline ulong get_enabled() const noexcept { return enabled; }
 
   /** Disable the adaptive hash search system and empty the index.
   @return whether the adaptive hash index was enabled */

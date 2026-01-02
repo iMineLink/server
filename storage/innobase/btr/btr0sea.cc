@@ -458,7 +458,7 @@ ATTRIBUTE_COLD void btr_sea::enable(bool resize, ulong enable_opt) noexcept
 
 ATTRIBUTE_COLD void btr_sea::resize(uint n_cells) noexcept
 {
-  const bool was_enabled{disable_and_lock()};
+  const ulong was_enabled{disable_and_lock()};
 
   clear();
   ut_ad(!parts[0].table.array);

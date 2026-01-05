@@ -2949,6 +2949,49 @@ static bool innodb_copy_stat_flags(dict_table_t *table,
   return true;
 }
 
+#ifdef BTR_CUR_HASH_ADAPT
+/** Enable the adaptive hash index for indexes where needed.
+@param innodb_table  InnoDB table definition
+@param option_struct MariaDB table options
+@param table         MariaDB table handle */
+static void innodb_ahi_enable(dict_table_t *innodb_table,
+                              const ha_table_option_struct *option_struct,
+                              const TABLE *table)
+{
+  const uint8_t table_ahi= option_struct
+    ? uint8_t((option_struct->adaptive_hash_index + 1) % 3)
+    : uint8_t{1};
+  innodb_table->ahi_enabled= table_ahi;
+
+  if (table_ahi)
+  {
+    /* In case there is no PRIMARY KEY or UNIQUE INDEX on NOT NULL
+    columns, there will be GEN_CLUST_INDEX(DB_ROW_ID). Default to the
+    table option for it. If a PRIMARY KEY is defined, this default
+    value may be updated in the loop below. */
+    UT_LIST_GET_FIRST(innodb_table->indexes)->search_info.ahi_enabled=
+      table_ahi;
+    for (auto i= table->s->keys; i--; )
+    {
+      uint8_t ahi= table_ahi;
+      const KEY &key= table->key_info[i];
+      switch (key.option_struct->adaptive_hash_index) {
+      default:
+        break;
+      case 1:
+        ahi= 2;
+        /* fall through */
+      case 0:
+        dict_index_t *index=
+          dict_table_get_index_on_name(innodb_table, key.name.str);
+        if (index)
+          index->search_info.ahi_enabled= ahi;
+      }
+    }
+  }
+}
+#endif
+
 /*********************************************************************//**
 Copy table flags from MySQL's HA_CREATE_INFO into an InnoDB table object.
 Those flags are stored in .frm file and end up in the MySQL table object,
@@ -2959,42 +3002,39 @@ void
 innobase_copy_frm_flags_from_create_info(
 /*=====================================*/
 	dict_table_t*		innodb_table,	/*!< in/out: InnoDB table */
-	const HA_CREATE_INFO*	create_info)	/*!< in: create info */
+	const HA_CREATE_INFO*	create_info,	/*!< in: create info */
+	const TABLE*		table)		/*!< in: MariaDB table */
 {
   if (innodb_copy_stat_flags(innodb_table, create_info->table_options,
                              create_info->stats_auto_recalc, false))
+  {
     innodb_table->stats_sample_pages= create_info->stats_sample_pages;
+#ifdef BTR_CUR_HASH_ADAPT
+    innodb_ahi_enable(innodb_table, create_info->option_struct, table);
+#endif
+  }
 }
 
-/*********************************************************************//**
-Copy table flags from MySQL's TABLE_SHARE into an InnoDB table object.
+/**
+Copy table flags from MariaDB TABLE into an InnoDB table object.
 Those flags are stored in .frm file and end up in the MySQL table object,
 but are frequently used inside InnoDB so we keep their copies into the
-InnoDB table object. */
-void
-innobase_copy_frm_flags_from_table_share(
-/*=====================================*/
-	dict_table_t*		innodb_table,	/*!< in/out: InnoDB table */
-	const TABLE_SHARE*	table_share)	/*!< in: table share */
+InnoDB table object.
+@param innodb_table  InnoDB table
+@param table         MariaDB table handle */
+void innobase_copy_frm_flags_from_table(dict_table_t *innodb_table,
+                                        const TABLE *table) noexcept
 {
+  const TABLE_SHARE *const table_share{table->s};
   if (innodb_copy_stat_flags(innodb_table, table_share->db_create_options,
                              table_share->stats_auto_recalc,
                              innodb_table->stat_initialized()))
+  {
     innodb_table->stats_sample_pages= table_share->stats_sample_pages;
-# ifdef BTR_CUR_HASH_ADAPT
-    /*
-      ahi_enabled is set to 0 if the user has disabled AHI index for this table
-      by setting adaptive_hash_index=yes, 1 if it should be enabled if global
-      ahi is enabled for all tables and 2 if ahi is marked as if_specified
-    */
-  if (!table_share->option_struct ||
-      table_share->option_struct->adaptive_hash_index == 0)
-    innodb_table->ahi_enabled= 1;               // Not defined, use default ahi setting
-  else if (table_share->option_struct->adaptive_hash_index == 1)
-    innodb_table->ahi_enabled= 2;               // Enabled for table
-  else
-    innodb_table->ahi_enabled= 0;               // Disabled by for table
+#ifdef BTR_CUR_HASH_ADAPT
+    innodb_ahi_enable(innodb_table, table_share->option_struct, table);
 #endif
+  }
 }
 
 /*********************************************************************//**
@@ -5883,7 +5923,7 @@ ha_innobase::open(const char* name, int, uint)
 		DBUG_RETURN(HA_ERR_CRASHED_ON_USAGE);
 	}
 
-	innobase_copy_frm_flags_from_table_share(ib_table, table->s);
+	innobase_copy_frm_flags_from_table(ib_table, table);
 
 	MONITOR_INC(MONITOR_TABLE_OPEN);
 
@@ -6058,12 +6098,10 @@ ha_innobase::open(const char* name, int, uint)
 		initialize_auto_increment(m_prebuilt->table, *ai, *table->s);
 	}
 
-	/* Set plugin parser for fulltext index and ahi */
+	/* Set plugin parser for fulltext index */
 	for (uint i = 0; i < table->s->keys; i++) {
-          dict_index_t* index = 0;
-          uint8_t ahi;
 		if (table->key_info[i].flags & HA_USES_PARSER) {
-                        index = innobase_get_index(i);
+                        dict_index_t *index = innobase_get_index(i);
 			plugin_ref	parser = table->key_info[i].parser;
 
 			ut_ad(index->type & DICT_FTS);
@@ -6074,28 +6112,7 @@ ha_innobase::open(const char* name, int, uint)
 			DBUG_EXECUTE_IF("fts_instrument_use_default_parser",
 				index->parser = &fts_default_parser;);
 		}
-#ifdef BTR_CUR_HASH_ADAPT
-                /*
-                  Enable AHI if index option is 'yes' or if no index
-                  option is given and table level AHI is enabled
-                  See btre_sea::is_enabled() for usage of this.
-                */
-                ahi= 0;
-                if (table->key_info[i].option_struct->adaptive_hash_index == 0 &&
-                    ib_table->ahi_enabled)
-                  ahi= ib_table->ahi_enabled;    // 1 (default) or 2 (forced)
-                else if (table->key_info[i].option_struct->adaptive_hash_index == 1)
-                  ahi= 2;                       // Force index usage
-
-                if (ahi)
-                {
-                  if (!index)
-                    index = innobase_get_index(i);
-                  if (index)                    // Not primary key
-                    index->search_info.ahi_enabled= ahi;
-                }
 	}
-#endif /* BTR_CUR_HASH_ADAPT */
 
 	ut_ad(!m_prebuilt->table
 	      || table->versioned() == m_prebuilt->table->versioned());
@@ -13226,7 +13243,7 @@ void create_table_info_t::create_table_update_dict(dict_table_t *table,
 
   DBUG_ASSERT(!table->fts == !table->fts_doc_id_index);
 
-  innobase_copy_frm_flags_from_create_info(table, &info);
+  innobase_copy_frm_flags_from_create_info(table, &info, &t);
 
   /* Load server stopword into FTS cache */
   if (table->flags2 & DICT_TF2_FTS &&
@@ -17475,7 +17492,7 @@ ha_innobase::check_if_incompatible_data(
 	m_prebuilt->table->stats_mutex_lock();
 	if (!m_prebuilt->table->stat_initialized()) {
 		innobase_copy_frm_flags_from_create_info(
-			m_prebuilt->table, info);
+			m_prebuilt->table, info, table);
 	}
 	m_prebuilt->table->stats_mutex_unlock();
 

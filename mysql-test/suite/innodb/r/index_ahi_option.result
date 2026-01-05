@@ -11,14 +11,13 @@ id INT PRIMARY KEY,
 col1 INT, col2 INT, col3 INT,
 INDEX idx_1 (col1),
 INDEX idx_2 (col1, col2),
-INDEX idx_3 (col1, col2, col3) 
-) ENGINE=InnoDB;
+INDEX idx_3 (col1, col2, col3)
+) ENGINE=InnoDB STATS_PERSISTENT=0;
 INSERT INTO t1 SELECT seq, seq % 100, seq % 10, seq % 5 FROM seq_1_to_50000;
 INSERT INTO t1 VALUES (50001, 50, 1, 1), (50002, 50, 2, 2),
 (50003, 50, 3, 3), (50004, 50, 4, 4), (50005, 50, 5, 0),
 (50006, 50, 6, 1), (50007, 50, 7, 2), (50008, 50, 8, 3),
 (50009, 50, 9, 4);
-# Analyze format idx_1
 ANALYZE FORMAT=JSON
 SELECT COUNT(*) FROM t1 FORCE INDEX(idx_1) WHERE col1 = 50;
 ANALYZE
@@ -60,7 +59,6 @@ ANALYZE
     ]
   }
 }
-# Analyze format idx_2
 ANALYZE FORMAT=JSON
 SELECT COUNT(*) FROM t1 FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9;
 ANALYZE
@@ -102,7 +100,254 @@ ANALYZE
     ]
   }
 }
-# Analyze format idx_3
+ANALYZE FORMAT=JSON
+SELECT COUNT(*) FROM t1 FORCE INDEX(idx_3) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9 AND col3 BETWEEN 0 AND 9;
+ANALYZE
+{
+  "query_optimization": {
+    "r_total_time_ms": "REPLACED"
+  },
+  "query_block": {
+    "select_id": 1,
+    "cost": 0.077099705,
+    "r_loops": 1,
+    "r_total_time_ms": "REPLACED",
+    "nested_loop": [
+      {
+        "table": {
+          "table_name": "t1",
+          "access_type": "range",
+          "possible_keys": ["idx_3"],
+          "key": "idx_3",
+          "key_length": "15",
+          "used_key_parts": ["col1", "col2", "col3"],
+          "loops": 1,
+          "r_loops": 1,
+          "rows": 509,
+          "r_rows": 509,
+          "cost": 0.077099705,
+          "r_table_time_ms": "REPLACED",
+          "r_other_time_ms": "REPLACED",
+          "r_engine_stats": {
+            "pages_accessed": 6
+          },
+          "filtered": 100,
+          "r_total_filtered": 100,
+          "attached_condition": "t1.col1 = 50 and t1.col2 between 0 and 9 and t1.col3 between 0 and 9",
+          "r_filtered": 100,
+          "using_index": true
+        }
+      }
+    ]
+  }
+}
+ALTER TABLE t1 adaptive_hash_index=OFF, FORCE;
+ANALYZE FORMAT=JSON
+SELECT COUNT(*) FROM t1 FORCE INDEX(idx_1) WHERE col1 = 50;
+ANALYZE
+{
+  "query_optimization": {
+    "r_total_time_ms": "REPLACED"
+  },
+  "query_block": {
+    "select_id": 1,
+    "cost": 0.076308585,
+    "r_loops": 1,
+    "r_total_time_ms": "REPLACED",
+    "nested_loop": [
+      {
+        "table": {
+          "table_name": "t1",
+          "access_type": "ref",
+          "possible_keys": ["idx_1"],
+          "key": "idx_1",
+          "key_length": "5",
+          "used_key_parts": ["col1"],
+          "ref": ["const"],
+          "loops": 1,
+          "r_loops": 1,
+          "rows": 509,
+          "r_rows": 509,
+          "cost": 0.076308585,
+          "r_table_time_ms": "REPLACED",
+          "r_other_time_ms": "REPLACED",
+          "r_engine_stats": {
+            "pages_accessed": 4
+          },
+          "filtered": 100,
+          "r_total_filtered": 100,
+          "r_filtered": 100,
+          "using_index": true
+        }
+      }
+    ]
+  }
+}
+ANALYZE FORMAT=JSON
+SELECT COUNT(*) FROM t1 FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9;
+ANALYZE
+{
+  "query_optimization": {
+    "r_total_time_ms": "REPLACED"
+  },
+  "query_block": {
+    "select_id": 1,
+    "cost": 0.077099705,
+    "r_loops": 1,
+    "r_total_time_ms": "REPLACED",
+    "nested_loop": [
+      {
+        "table": {
+          "table_name": "t1",
+          "access_type": "range",
+          "possible_keys": ["idx_2"],
+          "key": "idx_2",
+          "key_length": "10",
+          "used_key_parts": ["col1", "col2"],
+          "loops": 1,
+          "r_loops": 1,
+          "rows": 509,
+          "r_rows": 509,
+          "cost": 0.077099705,
+          "r_table_time_ms": "REPLACED",
+          "r_other_time_ms": "REPLACED",
+          "r_engine_stats": {
+            "pages_accessed": 6
+          },
+          "filtered": 100,
+          "r_total_filtered": 100,
+          "attached_condition": "t1.col1 = 50 and t1.col2 between 0 and 9",
+          "r_filtered": 100,
+          "using_index": true
+        }
+      }
+    ]
+  }
+}
+ANALYZE FORMAT=JSON
+SELECT COUNT(*) FROM t1 FORCE INDEX(idx_3) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9 AND col3 BETWEEN 0 AND 9;
+ANALYZE
+{
+  "query_optimization": {
+    "r_total_time_ms": "REPLACED"
+  },
+  "query_block": {
+    "select_id": 1,
+    "cost": 0.077099705,
+    "r_loops": 1,
+    "r_total_time_ms": "REPLACED",
+    "nested_loop": [
+      {
+        "table": {
+          "table_name": "t1",
+          "access_type": "range",
+          "possible_keys": ["idx_3"],
+          "key": "idx_3",
+          "key_length": "15",
+          "used_key_parts": ["col1", "col2", "col3"],
+          "loops": 1,
+          "r_loops": 1,
+          "rows": 509,
+          "r_rows": 509,
+          "cost": 0.077099705,
+          "r_table_time_ms": "REPLACED",
+          "r_other_time_ms": "REPLACED",
+          "r_engine_stats": {
+            "pages_accessed": 6
+          },
+          "filtered": 100,
+          "r_total_filtered": 100,
+          "attached_condition": "t1.col1 = 50 and t1.col2 between 0 and 9 and t1.col3 between 0 and 9",
+          "r_filtered": 100,
+          "using_index": true
+        }
+      }
+    ]
+  }
+}
+ALTER TABLE t1 adaptive_hash_index='ON';
+ANALYZE FORMAT=JSON
+SELECT COUNT(*) FROM t1 FORCE INDEX(idx_1) WHERE col1 = 50;
+ANALYZE
+{
+  "query_optimization": {
+    "r_total_time_ms": "REPLACED"
+  },
+  "query_block": {
+    "select_id": 1,
+    "cost": 0.076308585,
+    "r_loops": 1,
+    "r_total_time_ms": "REPLACED",
+    "nested_loop": [
+      {
+        "table": {
+          "table_name": "t1",
+          "access_type": "ref",
+          "possible_keys": ["idx_1"],
+          "key": "idx_1",
+          "key_length": "5",
+          "used_key_parts": ["col1"],
+          "ref": ["const"],
+          "loops": 1,
+          "r_loops": 1,
+          "rows": 509,
+          "r_rows": 509,
+          "cost": 0.076308585,
+          "r_table_time_ms": "REPLACED",
+          "r_other_time_ms": "REPLACED",
+          "r_engine_stats": {
+            "pages_accessed": 4
+          },
+          "filtered": 100,
+          "r_total_filtered": 100,
+          "r_filtered": 100,
+          "using_index": true
+        }
+      }
+    ]
+  }
+}
+ANALYZE FORMAT=JSON
+SELECT COUNT(*) FROM t1 FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9;
+ANALYZE
+{
+  "query_optimization": {
+    "r_total_time_ms": "REPLACED"
+  },
+  "query_block": {
+    "select_id": 1,
+    "cost": 0.077099705,
+    "r_loops": 1,
+    "r_total_time_ms": "REPLACED",
+    "nested_loop": [
+      {
+        "table": {
+          "table_name": "t1",
+          "access_type": "range",
+          "possible_keys": ["idx_2"],
+          "key": "idx_2",
+          "key_length": "10",
+          "used_key_parts": ["col1", "col2"],
+          "loops": 1,
+          "r_loops": 1,
+          "rows": 509,
+          "r_rows": 509,
+          "cost": 0.077099705,
+          "r_table_time_ms": "REPLACED",
+          "r_other_time_ms": "REPLACED",
+          "r_engine_stats": {
+            "pages_accessed": 6
+          },
+          "filtered": 100,
+          "r_total_filtered": 100,
+          "attached_condition": "t1.col1 = 50 and t1.col2 between 0 and 9",
+          "r_filtered": 100,
+          "using_index": true
+        }
+      }
+    ]
+  }
+}
 ANALYZE FORMAT=JSON
 SELECT COUNT(*) FROM t1 FORCE INDEX(idx_3) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9 AND col3 BETWEEN 0 AND 9;
 ANALYZE

@@ -6,11 +6,14 @@
 --echo #
 
 SET @start_global_value = @@global.innodb_adaptive_hash_index;
-if ($MTR_COMBINATION_AHI == 1) {
+if ($MTR_COMBINATION_AHI) {
 SET GLOBAL innodb_adaptive_hash_index=ON;
 }
-if (!$MTR_COMBINATION_AHI) {
+if ($MTR_COMBINATION_NO_AHI) {
 SET GLOBAL innodb_adaptive_hash_index=OFF;
+}
+if ($MTR_COMBINATION_IF_SPECIFIED) {
+SET GLOBAL innodb_adaptive_hash_index=if_specified;
 }
 
 --echo #
@@ -23,7 +26,7 @@ CREATE TABLE t1 (
   INDEX idx_1 (col1),
   INDEX idx_2 (col1, col2),
   INDEX idx_3 (col1, col2, col3)
-) ENGINE=InnoDB STATS_PERSISTENT=0;
+) ENGINE=InnoDB STATS_PERSISTENT=0 adaptive_hash_index=DEFAULT;
 
 INSERT INTO t1 SELECT seq, seq % 100, seq % 10, seq % 5 FROM seq_1_to_50000;
 

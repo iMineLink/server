@@ -806,14 +806,14 @@ innobase_fts_check_doc_id_index_in_def(
 	MY_ATTRIBUTE((warn_unused_result));
 
 /**
-Copy table flags from MySQL's TABLE_SHARE into an InnoDB table object.
+Copy table flags from MariaDB TABLE into an InnoDB table object.
 Those flags are stored in .frm file and end up in the MySQL table object,
 but are frequently used inside InnoDB so we keep their copies into the
-InnoDB table object. */
-void
-innobase_copy_frm_flags_from_table_share(
-	dict_table_t*		innodb_table,	/*!< in/out: InnoDB table */
-	const TABLE_SHARE*	table_share);	/*!< in: table share */
+InnoDB table object.
+@param innodb_table  InnoDB table
+@param table         MariaDB table handle */
+void innobase_copy_frm_flags_from_table(dict_table_t *innodb_table,
+                                        const TABLE *table) noexcept;
 
 /** Set up base columns for virtual column
 @param[in]	table	the InnoDB table

@@ -1100,6 +1100,14 @@ struct dict_index_t {
     /** number of buf_block_t::index pointers to this index */
     Atomic_counter<size_t> ref_count{0};
 
+    /** mask which indicates which bits are valid in
+    ahi_fixed_left_bytes_fields */
+    uint32_t ahi_fixed_left_bytes_fields_mask{0};
+    /** fixed parameters in recommendations, validity depends on
+    ahi_fixed_left_bytes_fields_mask;
+    @see buf_block_t::left_bytes_fields */
+    uint32_t ahi_fixed_left_bytes_fields{0};
+
 #  ifdef UNIV_SEARCH_PERF_STAT
     /** number of successful hash searches */
     size_t n_hash_succ{0};

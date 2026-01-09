@@ -679,8 +679,8 @@ ha_create_table_option innodb_index_option_list[]=
   HA_IOPTION_NUMBER("COMPLETE_FIELDS", complete_fields, 0, 1, 32, 1),
   HA_IOPTION_NUMBER("BYTES_FROM_INCOMPLETE_FIELDS",
                     bytes_from_incomplete_fields, 0, 1, 8192, 1),
-  HA_IOPTION_BOOL("FOR_EQUAL_HASH_POINT_TO_LAST_RECORD",
-                  for_equal_hash_point_to_last_record, 0),
+  HA_IOPTION_ENUM("FOR_EQUAL_HASH_POINT_TO_LAST_RECORD",
+                  for_equal_hash_point_to_last_record, "DEFAULT,YES,NO", 0),
   HA_IOPTION_END
 };
 
@@ -2985,7 +2985,31 @@ static void innodb_ahi_enable(dict_table_t *innodb_table,
         dict_index_t *index=
           dict_table_get_index_on_name(innodb_table, key.name.str);
         if (index)
+        {
           index->search_info.ahi_enabled= ahi;
+          const auto fields= key.option_struct->complete_fields;
+          const auto bytes= key.option_struct->bytes_from_incomplete_fields;
+          const auto left=
+              key.option_struct->for_equal_hash_point_to_last_record;
+          ut_ad(fields < 0xFFFF);
+          ut_ad(bytes < 0x8000);
+          ut_ad(left <= 2);
+          /* TODO Cannot force "0" as fields or bytes, as it's the
+          default value which represents "unset" property */
+          const bool is_fields_set= fields != 0;
+          const bool is_bytes_set= bytes != 0;
+          const bool is_left_set= left != 0;
+          const uint32_t mask=
+            (is_fields_set ? 0x0000FFFF : 0) |
+            (is_bytes_set  ? 0x7FFF0000 : 0) |
+            (is_left_set   ? 0x80000000 : 0);
+          const uint32_t fixed=
+            static_cast<uint32_t>(fields) |
+            (static_cast<uint32_t>(bytes) << 16) |
+            (left == 1 ? 0x80000000 : 0);
+          index->search_info.ahi_fixed_left_bytes_fields_mask= mask;
+          index->search_info.ahi_fixed_left_bytes_fields= fixed;
+        }
       }
     }
   }

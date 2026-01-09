@@ -686,9 +686,15 @@ static uint32_t btr_search_info_update_hash(const btr_cur_t &cursor) noexcept
   uint8_t n_hash_potential= info.n_hash_potential;
   uint32_t ret;
 
+  const auto& mask= info.ahi_fixed_left_bytes_fields_mask;
+  const auto& fixed= info.ahi_fixed_left_bytes_fields;
+
   if (!n_hash_potential)
   {
-    info.left_bytes_fields= left_bytes_fields= buf_block_t::LEFT_SIDE | 1;
+    left_bytes_fields= buf_block_t::LEFT_SIDE | 1;
+    /* Override with fixed values */
+    left_bytes_fields= (left_bytes_fields & ~mask) | (fixed & mask);
+    info.left_bytes_fields= left_bytes_fields;
     info.hash_analysis_reset();
   increment_potential:
     if (n_hash_potential < BTR_SEARCH_BUILD_LIMIT)
@@ -748,6 +754,8 @@ static uint32_t btr_search_info_update_hash(const btr_cur_t &cursor) noexcept
         left_bytes_fields|= uint32_t(cursor.up_bytes + 1) << 16;
       }
     }
+    /* Override with fixed values */
+    left_bytes_fields= (left_bytes_fields & ~mask) | (fixed & mask);
     /* We have to set a new recommendation; skip the hash analysis for a
     while to avoid unnecessary CPU time usage when there is no chance
     for success */

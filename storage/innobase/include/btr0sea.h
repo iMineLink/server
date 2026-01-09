@@ -130,13 +130,13 @@ public:
     /*
        Index is enabled if global ahi is enabled and index can be enabled.
        If enabled is set to 2 (IF_SPECIFIED), only enable indexes declared
-       with ahi enabled on (ahi_enabled == 2).
-       We don't have to check if index->search_info.ahi_enabled != 0
-       as the test enabled <= ahi_enabled will not be true in this case.
+       with ahi enabled on (get_ahi_enabled() == 2).
+       We don't have to check if index->search_info.get_ahi_enabled() != 0
+       as the test enabled <= get_ahi_enabled() will not be true in this case.
     */
     const ulong enabled{get_enabled()};
     return (unlikely(enabled != 0) &&
-            enabled <= index->search_info.ahi_enabled);
+            enabled <= index->search_info.get_ahi_enabled());
   }
   /*
     Same as above, but if index == 0 return 1. This to handle the case
@@ -146,7 +146,7 @@ public:
   {
     const ulong enabled{get_enabled()};
     return (unlikely(enabled != 0) &&
-            (!index || enabled <= index->search_info.ahi_enabled));
+            (!index || enabled <= index->search_info.get_ahi_enabled()));
   }
 
   inline ulong get_enabled() const noexcept { return enabled; }

@@ -464,7 +464,7 @@ ATTRIBUTE_COLD void btr_sea::resize(uint n_cells) noexcept
   ut_ad(!parts[0].table.array);
 
   if (was_enabled)
-    enabled= alloc(n_cells);
+    enabled= alloc(n_cells) ? was_enabled : 0;
 
   if (!was_enabled || enabled)
     this->n_cells= n_cells;
@@ -601,7 +601,7 @@ static void btr_search_update_hash_ref(const btr_cur_t &cursor,
   {
     ut_ad(block_index == index);
     ut_ad(btr_search.get_enabled());
-    ut_ad(index->search_info.ahi_enabled);
+    ut_ad(index->search_info.get_ahi_enabled());
     uint32_t bytes_fields{block->ahi_left_bytes_fields};
     if (bytes_fields != left_bytes_fields)
       goto skip;
@@ -686,9 +686,22 @@ static uint32_t btr_search_info_update_hash(const btr_cur_t &cursor) noexcept
   uint8_t n_hash_potential= info.n_hash_potential;
   uint32_t ret;
 
+  uint32_t ahi_enabled_fixed_mask, fixed, mask;
+  ut_d(ahi_enabled_fixed_mask= 0);
+  ut_d(fixed= 0);
+  ut_d(mask= 0);
+  ut_d(bool fixed_mask_set= false);
+
   if (!n_hash_potential)
   {
-    info.left_bytes_fields= left_bytes_fields= buf_block_t::LEFT_SIDE | 1;
+    left_bytes_fields= buf_block_t::LEFT_SIDE | 1;
+    /* Override with fixed values */
+    ut_ad(!fixed_mask_set);
+    ahi_enabled_fixed_mask= info.get_ahi_enabled_fixed_mask();
+    info.get_ahi_fixed_mask(ahi_enabled_fixed_mask, fixed, mask);
+    ut_d(fixed_mask_set= true);
+    left_bytes_fields= (left_bytes_fields & ~mask) | (fixed & mask);
+    info.left_bytes_fields= left_bytes_fields;
     info.hash_analysis_reset();
   increment_potential:
     if (n_hash_potential < BTR_SEARCH_BUILD_LIMIT)
@@ -748,6 +761,12 @@ static uint32_t btr_search_info_update_hash(const btr_cur_t &cursor) noexcept
         left_bytes_fields|= uint32_t(cursor.up_bytes + 1) << 16;
       }
     }
+    /* Override with fixed values */
+    ut_ad(!fixed_mask_set);
+    ahi_enabled_fixed_mask= info.get_ahi_enabled_fixed_mask();
+    info.get_ahi_fixed_mask(ahi_enabled_fixed_mask, fixed, mask);
+    ut_d(fixed_mask_set= true);
+    left_bytes_fields= (left_bytes_fields & ~mask) | (fixed & mask);
     /* We have to set a new recommendation; skip the hash analysis for a
     while to avoid unnecessary CPU time usage when there is no chance
     for success */
@@ -802,6 +821,167 @@ func_exit:
   }
   else if (cursor.flag == BTR_CUR_HASH_FAIL)
     btr_search_update_hash_ref(cursor, block, left_bytes_fields);
+
+  ut_ad(!ret || ((ret & mask) == (fixed & mask)));
+  DBUG_EXECUTE_IF("index_ahi_option_debug_check",
+  {
+    /* Since enabled comes from the same atomic variable, it's coherent */
+    const uint8_t enabled= info.get_ahi_enabled(ahi_enabled_fixed_mask);
+    const char* idx_name= index->name;
+    const char* table_name= index->table->name.m_name;
+    if (!fixed_mask_set) {}
+    else if (!strcmp(idx_name, "idx_1"))
+    {
+      /*
+      INDEX idx_1 (col1)
+      adaptive_hash_index=DEFAULT
+      complete_fields=0
+      bytes_from_incomplete_field=3
+      for_equal_hash_point_to_last_record=0
+      */
+      if (!strcmp(table_name, "test/t1_ahi_no"))
+      {
+        ut_ad(enabled == 0);
+        ut_ad(false);
+      }
+      else if (!strcmp(table_name, "test/t1_ahi_default"))
+        ut_ad(enabled == 1);
+      else if (!strcmp(table_name, "test/t1_ahi_yes"))
+        ut_ad(enabled == 2);
+      else
+        goto not_under_test;
+      ut_ad(mask == 0xFFFFFFFF);
+      ut_ad((fixed & mask) == ((3 << 16) | buf_block_t::LEFT_SIDE));
+    }
+    else if (!strcmp(idx_name, "idx_2"))
+    {
+      /*
+      INDEX idx_2 (col1, col2)
+      adaptive_hash_index=YES
+      complete_fields=1
+      bytes_from_incomplete_field=2
+      for_equal_hash_point_to_last_record=0
+      */
+      ut_ad(enabled == 2);
+      if (!strcmp(table_name, "test/t1_ahi_no")) {}
+      else if (!strcmp(table_name, "test/t1_ahi_default")) {}
+      else if (!strcmp(table_name, "test/t1_ahi_yes")) {}
+      else
+        goto not_under_test;
+      ut_ad(mask == 0xFFFFFFFF);
+      ut_ad((fixed & mask) == (1 | (2 << 16) | buf_block_t::LEFT_SIDE));
+    }
+    else if (!strcmp(idx_name, "idx_3"))
+    {
+      /*
+      INDEX idx_3 (col1, col2, col3)
+      adaptive_hash_index=NO
+      complete_fields=2
+      bytes_from_incomplete_field=2
+      for_equal_hash_point_to_last_record=1
+      */
+      ut_ad(enabled == 0);
+      if (!strcmp(table_name, "test/t1_ahi_no")) {}
+      else if (!strcmp(table_name, "test/t1_ahi_default")) {}
+      else if (!strcmp(table_name, "test/t1_ahi_yes")) {}
+      else
+        goto not_under_test;
+      ut_ad(mask == 0xFFFFFFFF);
+      ut_ad((fixed & mask) == (2 | (2 << 16) | buf_block_t::LEFT_SIDE));
+    }
+    else if (!strcmp(idx_name, "PRIMARY"))
+    {
+      /* id INT PRIMARY KEY */
+      if (!strcmp(table_name, "test/t1_ahi_no"))
+      {
+        ut_ad(enabled == 0);
+        ut_ad(false);
+      }
+      else if (!strcmp(table_name, "test/t1_ahi_default"))
+        ut_ad(enabled == 1);
+      else if (!strcmp(table_name, "test/t1_ahi_yes"))
+        ut_ad(enabled == 2);
+      else
+        goto not_under_test;
+      ut_ad(mask == 0);
+      /* Since mask is 0, fixed can be anything */
+    }
+    else if (!strcmp(idx_name, "idx_4"))
+    {
+      /* INDEX idx_4 (col2) complete_fields=2 */
+      if (!strcmp(table_name, "test/t1_ahi_no"))
+        ut_ad(false);
+      else if (!strcmp(table_name, "test/t1_ahi_default"))
+        ut_ad(false);
+      else if (!strcmp(table_name, "test/t1_ahi_yes"))
+        ut_ad(enabled == 2);
+      else
+        goto not_under_test;
+      ut_ad(mask == 0x0000FFFF);
+      ut_ad((fixed & mask) == 2);
+    }
+    else if (!strcmp(idx_name, "idx_5"))
+    {
+      /* INDEX idx_5 (col3) bytes_from_incomplete_field=5 */
+      if (!strcmp(table_name, "test/t1_ahi_no"))
+        ut_ad(false);
+      else if (!strcmp(table_name, "test/t1_ahi_default"))
+        ut_ad(false);
+      else if (!strcmp(table_name, "test/t1_ahi_yes"))
+        ut_ad(enabled == 2);
+      else
+        goto not_under_test;
+      ut_ad(mask == 0x7FFF0000);
+      ut_ad((fixed & mask) == (5 << 16));
+    }
+    else if (!strcmp(idx_name, "idx_6"))
+    {
+      /*
+      INDEX idx_6 (col2, col1)
+      complete_fields=0
+      bytes_from_incomplete_field=0
+      for_equal_hash_point_to_last_record=0
+      */
+      if (!strcmp(table_name, "test/t1_ahi_no"))
+        ut_ad(false);
+      else if (!strcmp(table_name, "test/t1_ahi_default"))
+        ut_ad(false);
+      else if (!strcmp(table_name, "test/t1_ahi_yes"))
+        ut_ad(enabled == 2);
+      else
+        goto not_under_test;
+      ut_ad(mask == 0xFFFFFFFF);
+      ut_ad((fixed & mask) == buf_block_t::LEFT_SIDE);
+    }
+    else if (!strcmp(idx_name, "idx_7"))
+    {
+      /*
+      INDEX idx_7 (col3, col2)
+      complete_fields=0
+      bytes_from_incomplete_field=0
+      for_equal_hash_point_to_last_record=1
+      */
+      if (!strcmp(table_name, "test/t1_ahi_no"))
+        ut_ad(false);
+      else if (!strcmp(table_name, "test/t1_ahi_default"))
+        ut_ad(false);
+      else if (!strcmp(table_name, "test/t1_ahi_yes"))
+        ut_ad(enabled == 2);
+      else
+        goto not_under_test;
+      ut_ad(mask == 0xFFFFFFFF);
+      ut_ad((fixed & mask) == 0);
+    }
+    else
+    {
+not_under_test:
+      /* AHI access to mysql/innodb_table_stats or mysql/innodb_index_stats
+      seems possible even with STATS_PERSISTENT=0, due to usage of
+      RENAME TABLE. Just check that no attributes were set there. */
+      ut_ad(enabled == 1);
+      ut_ad(mask == 0);
+    }
+  });
 
   return ret;
 }

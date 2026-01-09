@@ -675,20 +675,38 @@ ha_create_table_option innodb_table_option_list[]=
   /* With this option the user defines the key identifier using for the encryption */
   HA_TOPTION_SYSVAR("ENCRYPTION_KEY_ID", encryption_key_id, default_encryption_key_id),
   HA_TOPTION_ENUM("ADAPTIVE_HASH_INDEX", adaptive_hash_index,
-                  table_hint_options, 0),
+                  table_hint_options, TABLE_HINT_DEFAULT),
   HA_TOPTION_END
 };
+
+constexpr int max_bytes_from_incomplete_field= REDUNDANT_REC_MAX_DATA_SIZE;
+constexpr int max_complete_fields= 64;  /* 32 PK + 32 secondary index fields */
+static_assert(
+  max_complete_fields <= dict_index_t::ahi::max_fields,
+  "max_complete_fields too large for dict_index_t::ahi"
+);
+static_assert(
+  max_bytes_from_incomplete_field <= dict_index_t::ahi::max_bytes,
+  "max_bytes_from_incomplete_field too large for dict_index_t::ahi"
+);
+/* Max value in table_hint_options is TABLE_HINT_NO */
+static_assert(TABLE_HINT_NO <= dict_index_t::ahi::max_enabled,
+  "TABLE_HINT enum values too large for dict_index_t::ahi"
+);
 
 
 ha_create_table_option innodb_index_option_list[]=
 {
   HA_IOPTION_ENUM("ADAPTIVE_HASH_INDEX", adaptive_hash_index,
-                  table_hint_options, 0),
-  HA_IOPTION_NUMBER("COMPLETE_FIELDS", complete_fields, 0, 1, 32, 1),
-  HA_IOPTION_NUMBER("BYTES_FROM_INCOMPLETE_FIELDS",
-                    bytes_from_incomplete_fields, 0, 1, 8192, 1),
-  HA_IOPTION_BOOL("FOR_EQUAL_HASH_POINT_TO_LAST_RECORD",
-                  for_equal_hash_point_to_last_record, 0),
+                  table_hint_options, TABLE_HINT_DEFAULT),
+  HA_IOPTION_NUMBER("COMPLETE_FIELDS", complete_fields, ULONGLONG_MAX, 0,
+                    max_complete_fields, 1),
+  HA_IOPTION_NUMBER("BYTES_FROM_INCOMPLETE_FIELD",
+                    bytes_from_incomplete_field, ULONGLONG_MAX, 0,
+                    max_bytes_from_incomplete_field, 1),
+  HA_IOPTION_ENUM("FOR_EQUAL_HASH_POINT_TO_LAST_RECORD",
+                  for_equal_hash_point_to_last_record, table_hint_options,
+                  TABLE_HINT_DEFAULT),
   HA_IOPTION_END
 };
 
@@ -2882,37 +2900,64 @@ static void innodb_ahi_enable(dict_table_t *innodb_table,
                               const ha_table_option_struct *option_struct,
                               const TABLE *table)
 {
+  /*
+  Mapping from adaptive_hash_index to get_ahi_enabled():
+  TABLE_HINT_NO      (2) -> 0 (force disabled)
+  TABLE_HINT_DEFAULT (0) -> 1 (default, use global setting)
+  TABLE_HINT_YES     (1) -> 2 (prefer enabled, if not globally disabled)
+
+  Index preference, if set to YES|NO, will override table preference.
+  */
   const uint8_t table_ahi= option_struct
     ? uint8_t((option_struct->adaptive_hash_index + 1) % 3)
     : uint8_t{1};
-  innodb_table->ahi_enabled= table_ahi;
 
-  if (table_ahi)
+  /* In case there is no PRIMARY KEY or UNIQUE INDEX on NOT NULL
+  columns, there will be GEN_CLUST_INDEX(DB_ROW_ID). Default to the
+  table option for it. If a PRIMARY KEY is defined, this default
+  value may be updated in the loop below. */
+  auto* def_search_info=
+    &UT_LIST_GET_FIRST(innodb_table->indexes)->search_info;
+  for (auto i= table->s->keys; i--; )
   {
-    /* In case there is no PRIMARY KEY or UNIQUE INDEX on NOT NULL
-    columns, there will be GEN_CLUST_INDEX(DB_ROW_ID). Default to the
-    table option for it. If a PRIMARY KEY is defined, this default
-    value may be updated in the loop below. */
-    UT_LIST_GET_FIRST(innodb_table->indexes)->search_info.ahi_enabled=
-      table_ahi;
-    for (auto i= table->s->keys; i--; )
-    {
-      uint8_t ahi= table_ahi;
-      const KEY &key= table->key_info[i];
-      switch (key.option_struct->adaptive_hash_index) {
-      default:
-        break;
-      case 1:
-        ahi= 2;
-        /* fall through */
-      case 0:
-        dict_index_t *index=
-          dict_table_get_index_on_name(innodb_table, key.name.str);
-        if (index)
-          index->search_info.ahi_enabled= ahi;
-      }
-    }
+    const KEY &key= table->key_info[i];
+    dict_index_t *index=
+        dict_table_get_index_on_name(innodb_table, key.name.str);
+    if (!index)
+      continue;
+    const uint8_t index_ahi=
+      uint8_t((key.option_struct->adaptive_hash_index + 1) % 3);
+    /* Use index preference if set, otherwise use table preference */
+    const uint8_t mask= uint8_t(0 - (index_ahi & 1));
+    /* mask == 0xFF if index_ahi == 1, indicates index preference unset */
+    const uint8_t ahi= uint8_t((table_ahi & mask) | (index_ahi & ~mask));
+    const uint64_t fields= key.option_struct->complete_fields;
+    const uint64_t bytes= key.option_struct->bytes_from_incomplete_field;
+    const uint32_t right=
+      key.option_struct->for_equal_hash_point_to_last_record;
+    ut_ad(ahi <= 2);
+    ut_ad(fields == ULONGLONG_MAX || fields <= max_complete_fields);
+    ut_ad(bytes == ULONGLONG_MAX || bytes <= max_bytes_from_incomplete_field);
+    ut_ad(right <= TABLE_HINT_NO);
+    static_assert((uint64_t(1) << 63) > max_complete_fields,
+                  "Cannot use highest bit as unused flag");
+    static_assert((uint64_t(1) << 63) > max_bytes_from_incomplete_field,
+                  "Cannot use highest bit as unused flag");
+    index->search_info.set_ahi_enabled_fixed_mask(
+      ahi,
+      (~fields >> 63) & 1,  /* fields != ULONGLONG_MAX */
+      (~bytes >> 63) & 1,  /* bytes != ULONGLONG_MAX */
+      (right | (right >> 1)) & 1,  /* right != TABLE_HINT_DEFAULT */
+      uint8_t(fields),
+      uint16_t(bytes),
+      (right >> 1) & 1  /* right == TABLE_HINT_NO */
+    );
+    if (def_search_info == &index->search_info)
+      def_search_info= nullptr;
   }
+  if (def_search_info)
+    def_search_info->set_ahi_enabled_fixed_mask(
+      table_ahi, false, false, false, 0, 0, false);
 }
 #endif
 

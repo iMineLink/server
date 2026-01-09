@@ -53,8 +53,10 @@ struct ha_index_option_struct
 {
         uint            adaptive_hash_index;    /*!< DEFAULT, ON, OFF */
         ulonglong       complete_fields;
-	ulonglong	bytes_from_incomplete_fields;
-	my_bool         for_equal_hash_point_to_last_record;
+	ulonglong	bytes_from_incomplete_field;
+	/** DEFAULT (0), YES (1), NO (2)
+	DEFAULT means no fixed recommendation for this AHI parameter. */
+	uint         for_equal_hash_point_to_last_record;
 };
 
 /** The class defining a handle to an Innodb table */

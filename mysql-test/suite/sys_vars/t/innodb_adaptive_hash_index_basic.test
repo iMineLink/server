@@ -102,9 +102,11 @@ drop table t1;
 # Test extra index options
 #
 
-CREATE OR REPLACE TABLE t1 (a int primary key, b varchar(100), c int, index (c,b) adaptive_hash_index=yes complete_fields=1 bytes_from_incomplete_fields=1 for_equal_hash_point_to_last_record=1) engine=innodb;
+CREATE OR REPLACE TABLE t1 (a int primary key, b varchar(100), c int, index (c,b) adaptive_hash_index=yes complete_fields=1 bytes_from_incomplete_field=1 for_equal_hash_point_to_last_record=no) engine=innodb;
 show create table t1;
-alter table t1 drop index c, add index (c,b) complete_fields=2 bytes_from_incomplete_fields=default;
+alter table t1 drop index c, add index (c,b) complete_fields=2 bytes_from_incomplete_field=default for_equal_hash_point_to_last_record=default;
+show create table t1;
+alter table t1 drop index c, add index (c,b) complete_fields=0 bytes_from_incomplete_field=0 for_equal_hash_point_to_last_record=yes;
 show create table t1;
 drop table t1;
 

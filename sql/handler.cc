@@ -68,8 +68,8 @@
 #include "wsrep_var.h"            /* wsrep_hton_check() */
 #endif /* WITH_WSREP */
 
-/* Note that DEFAULT is handled automatically */
-const char *table_hint_options= "YES,NO";
+/* DEFAULT (0), YES (1), NO (2) */
+const char *table_hint_options= "DEFAULT,YES,NO";
 
 /**
   @def MYSQL_TABLE_LOCK_WAIT

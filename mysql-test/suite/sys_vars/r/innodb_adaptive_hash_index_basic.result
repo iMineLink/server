@@ -194,7 +194,7 @@ t1	CREATE TABLE `t1` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 CREATE OR REPLACE TABLE t1 (a int primary key, b varchar(100), index (b) adaptive_hash_index='on') engine=innodb, adaptive_hash_index='off';
 drop table t1;
-CREATE OR REPLACE TABLE t1 (a int primary key, b varchar(100), c int, index (c,b) adaptive_hash_index=yes complete_fields=1 bytes_from_incomplete_fields=1 for_equal_hash_point_to_last_record=1) engine=innodb;
+CREATE OR REPLACE TABLE t1 (a int primary key, b varchar(100), c int, index (c,b) adaptive_hash_index=yes complete_fields=1 bytes_from_incomplete_field=1 for_equal_hash_point_to_last_record=no) engine=innodb;
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
@@ -202,9 +202,9 @@ t1	CREATE TABLE `t1` (
   `b` varchar(100) DEFAULT NULL,
   `c` int(11) DEFAULT NULL,
   PRIMARY KEY (`a`),
-  KEY `c` (`c`,`b`) `adaptive_hash_index`=yes `complete_fields`=1 `bytes_from_incomplete_fields`=1 `for_equal_hash_point_to_last_record`=1
+  KEY `c` (`c`,`b`) `adaptive_hash_index`=yes `complete_fields`=1 `bytes_from_incomplete_field`=1 `for_equal_hash_point_to_last_record`=no
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
-alter table t1 drop index c, add index (c,b) complete_fields=2 bytes_from_incomplete_fields=default;
+alter table t1 drop index c, add index (c,b) complete_fields=2 bytes_from_incomplete_field=default for_equal_hash_point_to_last_record=default;
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
@@ -213,6 +213,16 @@ t1	CREATE TABLE `t1` (
   `c` int(11) DEFAULT NULL,
   PRIMARY KEY (`a`),
   KEY `c` (`c`,`b`) `complete_fields`=2
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+alter table t1 drop index c, add index (c,b) complete_fields=0 bytes_from_incomplete_field=0 for_equal_hash_point_to_last_record=yes;
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int(11) NOT NULL,
+  `b` varchar(100) DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
+  PRIMARY KEY (`a`),
+  KEY `c` (`c`,`b`) `complete_fields`=0 `bytes_from_incomplete_field`=0 `for_equal_hash_point_to_last_record`=yes
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 drop table t1;
 CREATE OR REPLACE TABLE t1 (a int primary key, b varchar(100), index(b)) engine=innodb, adaptive_hash_index='on' ENGINE=innodb PARTITION BY KEY (a) PARTITIONS 2;

@@ -1,20 +1,16 @@
 --- index_ahi_option.result
-+++ index_ahi_option,ahi.result
++++ index_ahi_option,if_specified.result
 @@ -2,7 +2,7 @@
  # Test InnoDB index-level adaptive_hash_index options
  #
  SET @start_global_value = @@global.innodb_adaptive_hash_index;
 -SET GLOBAL innodb_adaptive_hash_index=OFF;
-+SET GLOBAL innodb_adaptive_hash_index=ON;
++SET GLOBAL innodb_adaptive_hash_index=if_specified;
  CREATE TABLE t1 (
  id INT PRIMARY KEY,
  col1 INT, col2 INT, col3 INT,
-@@ -14,10 +14,10 @@
- SET GLOBAL innodb_monitor_enable = module_adaptive_hash;
- CALL run_and_check_idx(1, 240);
- result_msg
--# No AHI used in SELECT (idx_1)
-+# Used AHI in SELECT (idx_1)
+@@ -17,7 +17,7 @@
+ # No AHI used in SELECT (idx_1)
  CALL run_and_check_idx(2, 240);
  result_msg
 -# No AHI used in SELECT (idx_2)

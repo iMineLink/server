@@ -2994,6 +2994,7 @@ static void innodb_ahi_enable(dict_table_t *innodb_table,
           ut_ad(fields < 0xFFFF);
           ut_ad(bytes < 0x8000);
           ut_ad(left <= 2);
+          fprintf(stderr, "left= %u, bytes= %llu, fields= %llu\n", left, bytes, fields);
           /* TODO Cannot force "0" as fields or bytes, as it's the
           default value which represents "unset" property */
           const bool is_fields_set= fields != 0;

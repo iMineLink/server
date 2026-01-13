@@ -2957,6 +2957,13 @@ set sql_mode=default;
 SELECT 1 /* doesn't throw error */;
 SELECT 1 /* doesn't throw error */;
 
+--echo #
+--echo # mysqltest_long_replace_result fix
+--echo #
+--let $a=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+--replace_result $a b
+--exec echo "$a $a $a $a $a $a $a $a $a"
+
 --echo # End of tests
 
 --disable_query_log

@@ -3494,10 +3494,14 @@ void do_exec(struct st_command *command)
     ds_result= &ds_sorted;
   }
   int len;
+  DYNAMIC_STRING ds_temp;
+  init_dynamic_string(&ds_temp, "", 1024, 1024);
   while (my_fgets(buf, sizeof(buf), res_file,&len))
   {
-    replace_dynstr_append_mem(ds_result, buf, len);
+    dynstr_append_mem(&ds_temp, buf, len);
   }
+  replace_dynstr_append_mem(ds_result, ds_temp.str, ds_temp.length);
+  dynstr_free(&ds_temp);
   error= my_pclose(res_file);
 
   if (display_result_sorted)
@@ -12236,27 +12240,27 @@ void free_pointer_array(POINTER_ARRAY *pa)
 /* Append the string to ds, with optional replace */
 void replace_dynstr_append_mem(DYNAMIC_STRING *ds, const char *val, size_t len)
 {
-  char lower[1024];
+  DBUG_ASSERT(val);
+  DBUG_ASSERT(val[len] == 0);
+  DYNAMIC_STRING ds_lower;
+  init_dynamic_string(&ds_lower, val, len + 1, 1024);
+  DBUG_ASSERT(ds_lower.length == strlen(val));
+  DBUG_ASSERT(ds_lower.length <= len);
+  DBUG_ASSERT(ds_lower.str[ds_lower.length] == 0);
+  len= ds_lower.length;
 
-  if (len < sizeof(lower) - 1)
+  if (display_result_lower)
   {
-    if (display_result_lower)
-    {
-      /* Convert to lower case, and do this first */
-      char *c= lower;
-      for (const char *v= val, *end_v= v + len;  v < end_v;  v++)
-        *c++= my_tolower(charset_info, *v);
-      *c= '\0';
-      /* Copy from this buffer instead */
-    }
-    else
-    {
-      memcpy(lower, val, len);
-      lower[len]= 0;
-    }
-    fix_win_paths(lower, len);
-    val= lower;
+    /* Convert to lower case, and do this first */
+    char *c= ds_lower.str;
+    for (const char *v= val, *end_v= v + len;  v < end_v;  v++)
+      *c++= my_tolower(charset_info, *v);
+    DBUG_ASSERT(c == &ds_lower.str[ds_lower.length]);
+    DBUG_ASSERT(*c == 0);
   }
+  fix_win_paths(ds_lower.str, ds_lower.length);
+  val = ds_lower.str;
+  DBUG_ASSERT(ds_lower.str[ds_lower.length] == 0);
   
   if (glob_replace_regex)
   {
@@ -12275,6 +12279,8 @@ void replace_dynstr_append_mem(DYNAMIC_STRING *ds, const char *val, size_t len)
   }
   else
     dynstr_append_mem(ds, val, len);
+
+  dynstr_free(&ds_lower);
 }
 
 

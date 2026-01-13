@@ -1002,4 +1002,8 @@ SELECT 1 /* doesn't throw error */;
 SELECT 1 /* doesn't throw error */;
 1
 1
+#
+# mysqltest_long_replace_result fix
+#
+b b b b b b b b b
 # End of tests

@@ -214,6 +214,16 @@ t1	CREATE TABLE `t1` (
   PRIMARY KEY (`a`),
   KEY `c` (`c`,`b`) `complete_fields`=2
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+alter table t1 drop index c, add index (c,b) complete_fields=0 bytes_from_incomplete_fields=0 for_equal_hash_point_to_last_record=yes;
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int(11) NOT NULL,
+  `b` varchar(100) DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
+  PRIMARY KEY (`a`),
+  KEY `c` (`c`,`b`) `complete_fields`=0 `bytes_from_incomplete_fields`=0 `for_equal_hash_point_to_last_record`=yes
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 drop table t1;
 CREATE OR REPLACE TABLE t1 (a int primary key, b varchar(100), index(b)) engine=innodb, adaptive_hash_index='on' ENGINE=innodb PARTITION BY KEY (a) PARTITIONS 2;
 show create table t1;

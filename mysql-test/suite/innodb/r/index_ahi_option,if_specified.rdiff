@@ -5,19 +5,10 @@
  #
  SET @start_global_value = @@global.innodb_adaptive_hash_index;
 -SET GLOBAL innodb_adaptive_hash_index=OFF;
-+SET GLOBAL innodb_adaptive_hash_index=ON;
++SET GLOBAL innodb_adaptive_hash_index=if_specified;
  #
  # Scenario 1: complete_fields parameter with point lookups
  #
-@@ -48,7 +48,7 @@
-           "r_table_time_ms": "REPLACED",
-           "r_other_time_ms": "REPLACED",
-           "r_engine_stats": {
--            "pages_accessed": 6
-+            "pages_accessed": 5
-           },
-           "filtered": 100,
-           "r_total_filtered": 100,
 @@ -88,7 +88,7 @@
            "r_table_time_ms": "REPLACED",
            "r_other_time_ms": "REPLACED",
@@ -33,15 +24,6 @@
            "r_engine_stats": {
 -            "pages_accessed": 4
 +            "pages_accessed": 3
-           },
-           "filtered": 100,
-           "r_total_filtered": 100,
-@@ -296,7 +296,7 @@
-           "r_table_time_ms": "REPLACED",
-           "r_other_time_ms": "REPLACED",
-           "r_engine_stats": {
--            "pages_accessed": 6
-+            "pages_accessed": 5
            },
            "filtered": 100,
            "r_total_filtered": 100,

@@ -1089,9 +1089,10 @@ struct dict_index_t {
     search, and the calculation itself is not always accurate! */
     Atomic_relaxed<bool> last_hash_succ{false};
 
-    /** If adaptive hash indexes are enabled for this index
-        Values 0 (not enabled), 1 (enabled if ahi is globally enabled),
-        2 (adaptive_hash_index=on was set for the index)
+    /** If adaptive hash indexes are enabled for this index:
+        - 0: force disabled
+        - 1: no preference (set by default, use global setting)
+        - 2: prefer enabled (if not globally disabled)
     */
     Atomic_relaxed<uint8_t> ahi_enabled{0};
 
@@ -1102,11 +1103,11 @@ struct dict_index_t {
 
     /** mask which indicates which bits are valid in
     ahi_fixed_left_bytes_fields */
-    uint32_t ahi_fixed_left_bytes_fields_mask{0};
+    Atomic_relaxed<uint32_t> ahi_fixed_left_bytes_fields_mask{0};
     /** fixed parameters in recommendations, validity depends on
     ahi_fixed_left_bytes_fields_mask;
     @see buf_block_t::left_bytes_fields */
-    uint32_t ahi_fixed_left_bytes_fields{0};
+    Atomic_relaxed<uint32_t> ahi_fixed_left_bytes_fields{0};
 
 #  ifdef UNIV_SEARCH_PERF_STAT
     /** number of successful hash searches */
@@ -2325,17 +2326,6 @@ public:
 				/*!< True if the table belongs to a system
 				database (mysql, information_schema or
 				performance_schema) */
-#ifdef BTR_CUR_HASH_ADAPT
-        uint8_t ahi_enabled;	/*!< set to 0 if ahi is by default disabled
-                                  for this table,
-                                  1 if should ahi should be enabled if global ahi
-                                  is enabled and 2 if it should be enabled if
-                                  global ahi == if_specified
-                                  Used to update index->ahi_enabled.
-                                  Only used in ha_innodb.cc to set ahi_enabled for
-                                  each index.
-                                */
-#endif /* BTR_CUR_HASH_ADAPT */
 	dict_frm_t	dict_frm_mismatch;
 				/*!< !DICT_FRM_CONSISTENT==0 if data
 				dictionary information and

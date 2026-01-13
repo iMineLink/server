@@ -23,9 +23,9 @@ SET GLOBAL innodb_adaptive_hash_index=if_specified;
 CREATE TABLE t1 (
   id INT PRIMARY KEY,
   col1 INT, col2 INT, col3 INT,
-  INDEX idx_1 (col1),
-  INDEX idx_2 (col1, col2),
-  INDEX idx_3 (col1, col2, col3)
+  INDEX idx_1 (col1) adaptive_hash_index=DEFAULT,
+  INDEX idx_2 (col1, col2) adaptive_hash_index=YES,
+  INDEX idx_3 (col1, col2, col3) adaptive_hash_index=NO
 ) ENGINE=InnoDB STATS_PERSISTENT=0 adaptive_hash_index=DEFAULT;
 
 INSERT INTO t1 SELECT seq, seq % 100, seq % 10, seq % 5 FROM seq_1_to_50000;
@@ -57,7 +57,9 @@ SELECT COUNT(*) FROM t1 FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 BETWEEN 0 AN
 --replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
 ANALYZE FORMAT=JSON
 SELECT COUNT(*) FROM t1 FORCE INDEX(idx_3) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9 AND col3 BETWEEN 0 AND 9;
-ALTER TABLE t1 adaptive_hash_index=OFF, FORCE;
+
+ALTER TABLE t1 adaptive_hash_index=OFF;
+
 --replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
 ANALYZE FORMAT=JSON
 SELECT COUNT(*) FROM t1 FORCE INDEX(idx_1) WHERE col1 = 50;
@@ -67,7 +69,9 @@ SELECT COUNT(*) FROM t1 FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 BETWEEN 0 AN
 --replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
 ANALYZE FORMAT=JSON
 SELECT COUNT(*) FROM t1 FORCE INDEX(idx_3) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9 AND col3 BETWEEN 0 AND 9;
+
 ALTER TABLE t1 adaptive_hash_index='ON';
+
 let $i = 120;
 while ($i)
 {
@@ -79,7 +83,9 @@ while ($i)
   --enable_result_log
   --enable_query_log
   dec $i;
-}--replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
+}
+
+--replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
 ANALYZE FORMAT=JSON
 SELECT COUNT(*) FROM t1 FORCE INDEX(idx_1) WHERE col1 = 50;
 --replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/

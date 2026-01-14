@@ -2996,9 +2996,9 @@ static void innodb_ahi_enable(dict_table_t *innodb_table,
       index->search_info.ahi_fixed_left_bytes_fields= 0;
       continue;
     }
-    const auto fields= key.option_struct->complete_fields;
-    const auto bytes= key.option_struct->bytes_from_incomplete_fields;
-    const auto left=
+    const uint64_t fields= key.option_struct->complete_fields;
+    const uint64_t bytes= key.option_struct->bytes_from_incomplete_fields;
+    const uint32_t left=
         key.option_struct->for_equal_hash_point_to_last_record;
     ut_ad(fields == ULONGLONG_MAX || fields < 0xFFFF);
     ut_ad(bytes == ULONGLONG_MAX || bytes < 0x8000);
@@ -3011,8 +3011,8 @@ static void innodb_ahi_enable(dict_table_t *innodb_table,
       (is_bytes_set  ? 0x7FFF0000 : 0) |
       (is_left_set   ? 0x80000000 : 0);
     const uint32_t fixed=
-      static_cast<uint32_t>(fields) |
-      (static_cast<uint32_t>(bytes) << 16) |
+      (is_fields_set ? static_cast<uint32_t>(fields) : 0) |
+      (is_bytes_set ? (static_cast<uint32_t>(bytes) << 16) : 0) |
       (left == TABLE_HINT_YES ? 0x80000000 : 0);
     index->search_info.ahi_fixed_left_bytes_fields_mask= mask;
     index->search_info.ahi_fixed_left_bytes_fields= fixed;

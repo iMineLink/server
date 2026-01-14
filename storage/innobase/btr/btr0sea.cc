@@ -686,8 +686,8 @@ static uint32_t btr_search_info_update_hash(const btr_cur_t &cursor) noexcept
   uint8_t n_hash_potential= info.n_hash_potential;
   uint32_t ret;
 
-  const auto& mask= info.ahi_fixed_left_bytes_fields_mask;
-  const auto& fixed= info.ahi_fixed_left_bytes_fields;
+  const uint32_t mask= info.ahi_fixed_left_bytes_fields_mask.load();
+  const uint32_t fixed= info.ahi_fixed_left_bytes_fields.load();
 
   if (!n_hash_potential)
   {

@@ -689,6 +689,23 @@ static uint32_t btr_search_info_update_hash(const btr_cur_t &cursor) noexcept
   const uint32_t mask= info.ahi_fixed_left_bytes_fields_mask.load();
   const uint32_t fixed= info.ahi_fixed_left_bytes_fields.load();
 
+  fprintf(stderr, "[MDEV-37070] btr_search_info_update_hash: index %s"
+          " on page %u:%u with %zu fields, left_bytes_fields=0x%08x,"
+          " n_hash_helps=%u, n_hash_potential=%u,"
+          " cursor low %u bytes %u up %u bytes %u,"
+          " mask 0x%08x, fixed 0x%08x\n",
+          index->name.operator const char *(),
+          block->page.id().space(), block->page.id().page_no(),
+          btr_search_get_n_fields(left_bytes_fields & ~buf_block_t::LEFT_SIDE),
+          left_bytes_fields,
+          n_hash_helps,
+          n_hash_potential,
+          cursor.low_match,
+          cursor.low_bytes,
+          cursor.up_match,
+          cursor.up_bytes,
+          mask,
+          fixed);
   if (!n_hash_potential)
   {
     left_bytes_fields= buf_block_t::LEFT_SIDE | 1;
@@ -1729,6 +1746,15 @@ static void btr_search_build_page_hash_index(dict_index_t *index,
 
   MONITOR_INC(MONITOR_ADAPTIVE_HASH_PAGE_ADDED);
   assert_block_ahi_valid(block);
+  ut_ad(left_bytes_fields == block->ahi_left_bytes_fields.load());
+  fprintf(stderr, "[MDEV-37070] btr_search_build_page_hash_index: "
+          "Built AHI for index %s on page %u:%u with %zu fields, "
+          "left_bytes_fields=0x%08x\n",
+          index->name.operator const char *(),
+          block->page.id().space(),
+          block->page.id().page_no(),
+          btr_search_get_n_fields(left_bytes_fields & ~buf_block_t::LEFT_SIDE),
+          left_bytes_fields);
   part.latch.rd_unlock();
 }
 

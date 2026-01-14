@@ -2960,6 +2960,9 @@ static void innodb_ahi_enable(dict_table_t *innodb_table,
                               const ha_table_option_struct *option_struct,
                               const TABLE *table)
 {
+  size_t length;
+  fprintf(stderr, "[MDEV-37070] innodb_ahi_enable: query= %s\n",
+          innobase_get_stmt_unsafe(current_thd, &length));
   /*
   ahi_enabled maps:
   TABLE_HINT_NO (2) -> 0 (force disabled)
@@ -2990,6 +2993,18 @@ static void innodb_ahi_enable(dict_table_t *innodb_table,
     /* Use index preference if set, otherwise use table preference */
     const uint8_t ahi= index_ahi != 1 ? index_ahi: table_ahi;
     index->search_info.ahi_enabled= ahi;
+    fprintf(stderr, "[MDEV-37070] innodb_ahi_enable: index= %10s,"
+            " table_ahi_opt= %u, index_ahi_opt= %u, table_ahi= %u,"
+            " index_ahi= %u, ahi= %u, left= %u, bytes= %llu, fields= %llu\n",
+            key.name.str,
+            option_struct->adaptive_hash_index,
+            key.option_struct->adaptive_hash_index,
+            (uint32_t)table_ahi,
+            (uint32_t)index_ahi,
+            (uint32_t)(index->search_info.ahi_enabled.load()),
+            key.option_struct->for_equal_hash_point_to_last_record,
+            key.option_struct->bytes_from_incomplete_fields,
+            key.option_struct->complete_fields);
     if (ahi == 0)
     {
       index->search_info.ahi_fixed_left_bytes_fields_mask= 0;

@@ -175,9 +175,14 @@ static bool set_one_value(ha_create_table_option *opt, THD *thd,
       if (!value->str)
         DBUG_RETURN(0);
 
+      fprintf(stderr, "[MDEV-37070] set_one_value: Parsing enum option %s"
+              " with value '%s'\n", opt->name, value->str);
+
       uint num= value->find_in_list(opt->values);
       if (num != UINT_MAX)
       {
+        fprintf(stderr, "[MDEV-37070] set_one_value: Matched enum option %s"
+                " to index %u\n", opt->name, num);
         *val= num;
         DBUG_RETURN(0);
       }
@@ -186,7 +191,11 @@ static bool set_one_value(ha_create_table_option *opt, THD *thd,
       uint bool_val= value->find_in_list(bools);
       if (bool_val != UINT_MAX)
       {
+        fprintf(stderr, "[MDEV-37070] set_one_value: Matched boolean alias"
+                " for enum option %s to index %u\n", opt->name, bool_val);
         bool_val= bool_val > 3;
+        fprintf(stderr, "[MDEV-37070] set_one_value: Interpreted boolean"
+                " alias as %s\n", bool_val ? "YES" : "NO");
 
         static const LEX_CSTRING vals[2]= {
           { STRING_WITH_LEN("NO") },
@@ -194,21 +203,35 @@ static bool set_one_value(ha_create_table_option *opt, THD *thd,
         };
         const LEX_CSTRING &str_val= vals[bool_val];
         const char *str= opt->values;
+        fprintf(stderr, "[MDEV-37070] set_one_value: Searching enum option %s"
+                " for value '%s'\n", opt->name, str_val.str);
         size_t len= 0;
         for (int num= 0; str[len]; num++)
         {
+          fprintf(stderr, "[MDEV-37070] set_one_value: Checking enum"
+                  " candidate %d: '%s'\n", num, str);
           for (len= 0; str[len] && str[len] != ','; len++) /* no-op */;
+          fprintf(stderr, "[MDEV-37070] set_one_value: len= %zu\n", len);
           if (str_val.length == len && !strncasecmp(str_val.str, str, len))
           {
+            fprintf(stderr, "[MDEV-37070] set_one_value: Matched enum option"
+                    " %s to index %u via boolean alias\n", opt->name, num);
             *val= num;
             DBUG_RETURN(0);
           }
+          fprintf(stderr, "[MDEV-37070] set_one_value: Skipping enum value"
+                  " '%.*s'\n", (int) len, str);
           str+= len;
           if (*str == ',')
             ++str;
           len= 0;
+          fprintf(stderr, "[MDEV-37070] set_one_value: Next enum candidate"
+                  " starts at '%s'\n", str);
         }
       }
+
+      fprintf(stderr, "[MDEV-37070] set_one_value: Failed to match enum"
+              " option %s with value '%s'\n", opt->name, value->str);
 
       DBUG_RETURN(report_wrong_value(thd, opt->name, value->str,
                                      suppress_warning));

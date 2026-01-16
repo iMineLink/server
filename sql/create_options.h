@@ -54,7 +54,9 @@ public:
         for (end=str; *end && *end != ','; end++) /* no-op */;
         if (streq(Lex_cstring(str, end)))
           return num;
-        str= end + 1;
+        str= end;
+        if (*str == ',')
+          ++str;
       }
       return UINT_MAX;
    }

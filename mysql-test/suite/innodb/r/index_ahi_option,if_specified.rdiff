@@ -1,5 +1,5 @@
 --- index_ahi_option.result
-+++ index_ahi_option,ahi.result
++++ index_ahi_option,if_specified.result
 @@ -2,7 +2,7 @@
  # Test InnoDB index-level adaptive_hash_index options
  #
@@ -9,39 +9,27 @@
  #
  # Scenario 1: complete_fields parameter with point lookups
  #
-@@ -88,7 +88,7 @@
-           "r_table_time_ms": "REPLACED",
-           "r_other_time_ms": "REPLACED",
-           "r_engine_stats": {
--            "pages_accessed": 4
-+            "pages_accessed": 3
-           },
-           "filtered": 100,
-           "r_total_filtered": 100,
-@@ -212,7 +212,7 @@
-           "r_table_time_ms": "REPLACED",
-           "r_other_time_ms": "REPLACED",
-           "r_engine_stats": {
--            "pages_accessed": 4
-+            "pages_accessed": 3
-           },
-           "filtered": 100,
-           "r_total_filtered": 100,
-@@ -296,7 +296,7 @@
-           "r_table_time_ms": "REPLACED",
-           "r_other_time_ms": "REPLACED",
-           "r_engine_stats": {
--            "pages_accessed": 6
-+            "pages_accessed": 5
-           },
-           "filtered": 100,
-           "r_total_filtered": 100,
-@@ -336,7 +336,7 @@
-           "r_table_time_ms": "REPLACED",
-           "r_other_time_ms": "REPLACED",
-           "r_engine_stats": {
--            "pages_accessed": 4
-+            "pages_accessed": 3
-           },
-           "filtered": 100,
-           "r_total_filtered": 100,
+@@ -31,19 +31,19 @@
+ # Warming up AHI
+ # Warmed up AHI
+ # No AHI used in SELECT (idx_1)
+-# No AHI used in SELECT (idx_2)
++# Used AHI in SELECT (idx_2)
+ # No AHI used in SELECT (idx_3)
+ ALTER TABLE t1 adaptive_hash_index=OFF;
+ # Warming up AHI
+ # Warmed up AHI
+ # No AHI used in SELECT (idx_1)
+-# No AHI used in SELECT (idx_2)
++# Used AHI in SELECT (idx_2)
+ # No AHI used in SELECT (idx_3)
+ ALTER TABLE t1 adaptive_hash_index='ON';
+ # Warming up AHI
+ # Warmed up AHI
+-# No AHI used in SELECT (idx_1)
+-# No AHI used in SELECT (idx_2)
++# Used AHI in SELECT (idx_1)
++# Used AHI in SELECT (idx_2)
+ # No AHI used in SELECT (idx_3)
+ DROP TABLE t1;
+ SET @@global.innodb_adaptive_hash_index = @start_global_value;

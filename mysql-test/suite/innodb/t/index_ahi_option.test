@@ -35,7 +35,22 @@ INSERT INTO t1 VALUES (50001, 50, 1, 1), (50002, 50, 2, 2),
 (50006, 50, 6, 1), (50007, 50, 7, 2), (50008, 50, 8, 3),
 (50009, 50, 9, 4);
 
-let $i = 140;
+--echo #
+--echo # AHI usage in searches is verified by measuring an increase in
+--echo # the "count" of "adaptive_hash_searches" InnoDB metric.
+--echo # An alternative strategy would use "ANALYZE FORMAT=JSON" and
+--echo # check the "pages_accessed" entry: lower values w.r.t. the
+--echo # base case would imply that AHI was used for the search.
+--echo # Unfortunately, that is not really stable.
+--echo # Hopefully using "innodb_metrics" is more stable.
+--echo #
+
+SET GLOBAL innodb_monitor_enable = module_adaptive_hash;
+let $warm_up_rounds= 200;
+let $query_rounds= 10;
+
+--echo # Warming up AHI
+let $i = $warm_up_rounds;
 while ($i)
 {
   --disable_query_log
@@ -47,32 +62,67 @@ while ($i)
   --enable_query_log
   dec $i;
 }
+--echo # Warmed up AHI
 
---replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
-ANALYZE FORMAT=JSON
-SELECT COUNT(*) FROM t1 FORCE INDEX(idx_1) WHERE col1 = 50;
---replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
-ANALYZE FORMAT=JSON
-SELECT COUNT(*) FROM t1 FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9;
---replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
-ANALYZE FORMAT=JSON
-SELECT COUNT(*) FROM t1 FORCE INDEX(idx_3) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9 AND col3 BETWEEN 0 AND 9;
+let $val0 = query_get_value(SELECT count FROM information_schema.innodb_metrics WHERE name = 'adaptive_hash_searches', count, 1);
+let $k = $query_rounds;
+--disable_query_log
+--disable_result_log
+while ($k) {
+  SELECT COUNT(*) FROM t1 FORCE INDEX(idx_1) WHERE col1 = 50;
+  dec $k;
+}
+--enable_result_log
+--enable_query_log
+let $val1 = query_get_value(SELECT count FROM information_schema.innodb_metrics WHERE name = 'adaptive_hash_searches', count, 1);
+if ($val1 > $val0) {
+  --echo # Used AHI in SELECT (idx_1)
+}
+if ($val1 <= $val0) {
+  --echo # No AHI used in SELECT (idx_1)
+}
+let $val0 = $val1;
+
+let $k = $query_rounds;
+--disable_query_log
+--disable_result_log
+while ($k) {
+  SELECT COUNT(*) FROM t1 FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9;
+  dec $k;
+}
+--enable_result_log
+--enable_query_log
+let $val1 = query_get_value(SELECT count FROM information_schema.innodb_metrics WHERE name = 'adaptive_hash_searches', count, 1);
+if ($val1 > $val0) {
+  --echo # Used AHI in SELECT (idx_2)
+}
+if ($val1 <= $val0) {
+  --echo # No AHI used in SELECT (idx_2)
+}
+let $val0 = $val1;
+
+let $k = $query_rounds;
+--disable_query_log
+--disable_result_log
+while ($k) {
+  SELECT COUNT(*) FROM t1 FORCE INDEX(idx_3) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9 AND col3 BETWEEN 0 AND 9;
+  dec $k;
+}
+--enable_result_log
+--enable_query_log
+let $val1 = query_get_value(SELECT count FROM information_schema.innodb_metrics WHERE name = 'adaptive_hash_searches', count, 1);
+if ($val1 > $val0) {
+  --echo # Used AHI in SELECT (idx_3)
+}
+if ($val1 <= $val0) {
+  --echo # No AHI used in SELECT (idx_3)
+}
+let $val0 = $val1;
 
 ALTER TABLE t1 adaptive_hash_index=OFF;
 
---replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
-ANALYZE FORMAT=JSON
-SELECT COUNT(*) FROM t1 FORCE INDEX(idx_1) WHERE col1 = 50;
---replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
-ANALYZE FORMAT=JSON
-SELECT COUNT(*) FROM t1 FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9;
---replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
-ANALYZE FORMAT=JSON
-SELECT COUNT(*) FROM t1 FORCE INDEX(idx_3) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9 AND col3 BETWEEN 0 AND 9;
-
-ALTER TABLE t1 adaptive_hash_index='ON';
-
-let $i = 140;
+--echo # Warming up AHI
+let $i = $warm_up_rounds;
 while ($i)
 {
   --disable_query_log
@@ -84,16 +134,139 @@ while ($i)
   --enable_query_log
   dec $i;
 }
+--echo # Warmed up AHI
 
---replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
-ANALYZE FORMAT=JSON
-SELECT COUNT(*) FROM t1 FORCE INDEX(idx_1) WHERE col1 = 50;
---replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
-ANALYZE FORMAT=JSON
-SELECT COUNT(*) FROM t1 FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9;
---replace_regex /("(r_[a-z_]*_time_ms)": )[^, \n]*/\1"REPLACED"/
-ANALYZE FORMAT=JSON
-SELECT COUNT(*) FROM t1 FORCE INDEX(idx_3) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9 AND col3 BETWEEN 0 AND 9;
+let $val0 = query_get_value(SELECT count FROM information_schema.innodb_metrics WHERE name = 'adaptive_hash_searches', count, 1);
+let $k = $query_rounds;
+--disable_query_log
+--disable_result_log
+while ($k) {
+  SELECT COUNT(*) FROM t1 FORCE INDEX(idx_1) WHERE col1 = 50;
+  dec $k;
+}
+--enable_result_log
+--enable_query_log
+let $val1 = query_get_value(SELECT count FROM information_schema.innodb_metrics WHERE name = 'adaptive_hash_searches', count, 1);
+if ($val1 > $val0) {
+  --echo # Used AHI in SELECT (idx_1)
+}
+if ($val1 <= $val0) {
+  --echo # No AHI used in SELECT (idx_1)
+}
+let $val0 = $val1;
+
+let $k = $query_rounds;
+--disable_query_log
+--disable_result_log
+while ($k) {
+  SELECT COUNT(*) FROM t1 FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9;
+  dec $k;
+}
+--enable_result_log
+--enable_query_log
+let $val1 = query_get_value(SELECT count FROM information_schema.innodb_metrics WHERE name = 'adaptive_hash_searches', count, 1);
+if ($val1 > $val0) {
+  --echo # Used AHI in SELECT (idx_2)
+}
+if ($val1 <= $val0) {
+  --echo # No AHI used in SELECT (idx_2)
+}
+let $val0 = $val1;
+
+let $k = $query_rounds;
+--disable_query_log
+--disable_result_log
+while ($k) {
+  SELECT COUNT(*) FROM t1 FORCE INDEX(idx_3) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9 AND col3 BETWEEN 0 AND 9;
+  dec $k;
+}
+--enable_result_log
+--enable_query_log
+let $val1 = query_get_value(SELECT count FROM information_schema.innodb_metrics WHERE name = 'adaptive_hash_searches', count, 1);
+if ($val1 > $val0) {
+  --echo # Used AHI in SELECT (idx_3)
+}
+if ($val1 <= $val0) {
+  --echo # No AHI used in SELECT (idx_3)
+}
+let $val0 = $val1;
+
+ALTER TABLE t1 adaptive_hash_index='ON';
+
+--echo # Warming up AHI
+let $i = 200;
+while ($i)
+{
+  --disable_query_log
+  --disable_result_log
+  SELECT COUNT(*) FROM t1 FORCE INDEX(idx_1) WHERE col1 = 50;
+  SELECT COUNT(*) FROM t1 FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 >= 0;
+  SELECT count(*) FROM t1 FORCE INDEX(idx_3) WHERE col1 = 50 and col2 >= 0 and col3 = 0;
+  --enable_result_log
+  --enable_query_log
+  dec $i;
+}
+--echo # Warmed up AHI
+
+let $val0 = query_get_value(SELECT count FROM information_schema.innodb_metrics WHERE name = 'adaptive_hash_searches', count, 1);
+let $k = $query_rounds;
+--disable_query_log
+--disable_result_log
+while ($k) {
+  SELECT COUNT(*) FROM t1 FORCE INDEX(idx_1) WHERE col1 = 50;
+  dec $k;
+}
+--enable_result_log
+--enable_query_log
+let $val1 = query_get_value(SELECT count FROM information_schema.innodb_metrics WHERE name = 'adaptive_hash_searches', count, 1);
+if ($val1 > $val0) {
+  --echo # Used AHI in SELECT (idx_1)
+}
+if ($val1 <= $val0) {
+  --echo # No AHI used in SELECT (idx_1)
+}
+let $val0 = $val1;
+
+let $k = $query_rounds;
+--disable_query_log
+--disable_result_log
+while ($k) {
+  SELECT COUNT(*) FROM t1 FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9;
+  dec $k;
+}
+--enable_result_log
+--enable_query_log
+let $val1 = query_get_value(SELECT count FROM information_schema.innodb_metrics WHERE name = 'adaptive_hash_searches', count, 1);
+if ($val1 > $val0) {
+  --echo # Used AHI in SELECT (idx_2)
+}
+if ($val1 <= $val0) {
+  --echo # No AHI used in SELECT (idx_2)
+}
+let $val0 = $val1;
+
+let $k = $query_rounds;
+--disable_query_log
+--disable_result_log
+while ($k) {
+  SELECT COUNT(*) FROM t1 FORCE INDEX(idx_3) WHERE col1 = 50 AND col2 BETWEEN 0 AND 9 AND col3 BETWEEN 0 AND 9;
+  dec $k;
+}
+--enable_result_log
+--enable_query_log
+let $val1 = query_get_value(SELECT count FROM information_schema.innodb_metrics WHERE name = 'adaptive_hash_searches', count, 1);
+if ($val1 > $val0) {
+  --echo # Used AHI in SELECT (idx_3)
+}
+if ($val1 <= $val0) {
+  --echo # No AHI used in SELECT (idx_3)
+}
+let $val0 = $val1;
 
 DROP TABLE t1;
 SET @@global.innodb_adaptive_hash_index = @start_global_value;
+SET GLOBAL innodb_monitor_disable = module_adaptive_hash;
+--disable_warnings
+SET GLOBAL innodb_monitor_disable = default;
+SET GLOBAL innodb_monitor_enable = default;
+--enable_warnings

@@ -4659,8 +4659,17 @@ bool page_zip_verify_checksum(const byte *data, size_t size)
 			return(TRUE);
 		}
 
+    if (stored != page_zip_calc_checksum(data, size, true))
+      ib::error() <<  "[size_overflow_compressed] zip checksum mismatch (1): "
+                  << "stored = " << stored
+                  << ", calculated = "
+                  << page_zip_calc_checksum(data, size, true);
+
 		return stored == page_zip_calc_checksum(data, size, true);
 	}
+  ib::error() << "[size_overflow_compressed] zip checksum mismatch (2): "
+              << "stored = " << stored
+              << ", calculated = " << calc;
 #endif /* !UNIV_INNOCHECKSUM */
 
 	return FALSE;

@@ -1,0 +1,118 @@
+--source include/have_innodb.inc
+
+--echo WARNING: This test creates a ~4 TiB sparse file using truncate.
+--echo          To avoid accidental disk exhaustion, ensure your filesystem
+--echo          fully supports sparse allocation before running this test.
+
+--echo # 1. Create the test table with compression
+# Compression makes it easier to reach overflow conditions due to smaller page size
+SET GLOBAL innodb_file_per_table=1;
+
+CREATE TABLE sys_attachment_doc (
+  sys_id char(32) NOT NULL DEFAULT '',
+  data mediumblob DEFAULT NULL,
+  PRIMARY KEY (sys_id)
+) ENGINE=InnoDB ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=1;
+
+--echo # 2. Cleanly shut down the server
+--source include/shutdown_mysqld.inc
+
+--echo # 3. Hex-edit headers and hardcode the known good CRC32 checksum
+--perl
+use strict;
+use warnings;
+use Fcntl;
+use IO::Handle;
+
+my $vardir = $ENV{'MYSQLTEST_VARDIR'} or die "MYSQLTEST_VARDIR is not set";
+my $file = "$vardir/mysqld.1/data/test/sys_attachment_doc.ibd";
+
+my $key_block_size = 1;
+my $extent_size = 1024 * 1024;  # 1 MiB
+# fsp_get_pages_to_extend_ibd allocates 4 extents for a large ibd file
+my $extension_size = 4 * $extent_size;  # 4 MiB
+my $page_size = 1024 * $key_block_size;
+my $target_pages = (2**32) - $extension_size / $page_size;
+my $target_bytes = $target_pages * $page_size;  # <4 TiB
+
+# Log the intended modifications for debugging purposes
+print "Modifying file: $file\n";
+print "Target FSP_SIZE and FSP_FREE_LIMIT (in pages): $target_pages\n";
+print "Target file size (in bytes): $target_bytes\n";
+
+truncate($file, $target_bytes) or die "Could not truncate file $file: $!";
+
+# Read the file size back to confirm it was set correctly
+my $actual_size = -s $file;
+if ($actual_size != $target_bytes) {
+    die "File size mismatch: expected $target_bytes bytes, but got $actual_size bytes";
+}
+print "File size successfully set to $actual_size bytes\n";
+
+open(my $fh, "+<", $file) or die "Could not open file $file: $!";
+binmode($fh);
+
+my $page0;
+sysread($fh, $page0, $page_size) == $page_size or die "Could not read Page 0";
+
+# Hex-edit FSP_SIZE (offset 46) and FSP_FREE_LIMIT (offset 50)
+my $val = pack("N", $target_pages);
+substr($page0, 46, 4) = $val;
+substr($page0, 50, 4) = $val;
+
+# Hardcode the exact CRC32 hash MariaDB calculated for this specific state
+# 10.4: 543253621
+# 10.6: 1593589531
+# 11.8/main: 1980907297
+substr($page0, 0, 4) = pack("N", 1593589531);
+
+# Write the forged Page 0 back to disk
+seek($fh, 0, 0);
+syswrite($fh, $page0, $page_size);
+
+$fh->flush();
+$fh->sync();
+close($fh);
+EOF
+
+--echo # 4. Restart the server normally (It will accept our hardcoded checksum!)
+--source include/start_mysqld.inc
+
+--echo # 5. Tell MTR to expect a server crash
+--source include/expect_crash.inc
+
+--echo # 6. Trigger the overflow crash
+#
+# In 10.4, the single query below was enough to trigger the overflow crash (via btr_store_big_rec_extern_fields):
+# INSERT INTO sys_attachment_doc (sys_id, data) VALUES ('12345', REPEAT('A', 1024));
+#
+# In 10.6+ some commits have changed the extent allocation behavior:
+# 9b5d711ac38 MDEV-20094 InnoDB blob allocation allocates extra extents
+# c3a6248bba7 MDEV-33542  Inplace algorithm occupies more disk space compared to copy algorithm
+#
+# Pre-requisite to trigger the overflow (without needing to extend the maximum packet size):
+INSERT INTO sys_attachment_doc (sys_id, data) VALUES ('12345', REPEAT('A', 16 * 1024 * 1024 - 1));
+#
+# In 10.6+ the second insert below triggers the allocation of 4 extra extents for the big record, making the size overflow happen
+#
+# In debug builds, this causes a crash in fil_space_extend_must_retry under btr_store_big_rec_extern_fields:
+#     storage/innobase/fil/fil0fil.cc:560: bool fil_space_extend_must_retry(fil_space_t*, fil_node_t*, uint32_t, bool*): Assertion `size >= 4U' failed
+# In release builds, this causes an infinite loop in btr_cur_pessimistic_delete > fsp_reserve_free_extents while rolling back the failed transaction
+#
+# Note 1: the error codes below are for the client connection, the server itself will crash and not return an error code
+# Note 2: in release, the server must be externally killed to allow the test to proceed
+#
+--error 2006,2013
+INSERT INTO sys_attachment_doc (sys_id, data) VALUES ('67890', REPEAT('A', 16 * 1024 * 1024 - 1));
+
+--echo # 7. Restart and clean up
+#
+# In 10.4, start and DROP TABLE will succeed
+#
+# In 10.6+:
+# In debug builds, this fails with crash due to trx_rollback_all_recovered failing to perform fil_space_extend_must_retry:
+#     storage/innobase/fil/fil0fil.cc:560: bool fil_space_extend_must_retry(fil_space_t*, fil_node_t*, uint32_t, bool*): Assertion `size >= 4U' failed
+# In release builds, if the process is manually killed at the previous step, the recovery thread goes in an infinite loop and the DROP TABLE is waiting for it to finish
+#
+--source include/start_mysqld.inc
+DROP TABLE sys_attachment_doc;

@@ -608,6 +608,13 @@ fsp_try_extend_data_file_with_pages(
 
 	ut_a(page_no >= size);
 
+  if (page_no >= UINT32_MAX)
+    ib::error() << "[size_overflow_compressed] Extending tablespace "
+               << space->id
+               << " to page number " << page_no
+               << " + 1 which exceeds the maximum page number "
+               << UINT32_MAX;
+
 	success = fil_space_extend(space, page_no + 1);
 	/* The size may be less than we wanted if we ran out of disk space. */
 	/* recv_sys_t::parse() expects to find a WRITE record that
@@ -740,6 +747,14 @@ fsp_try_extend_data_file(fil_space_t *space, buf_block_t *header, mtr_t *mtr)
 	if (size_increase == 0) {
 		return(0);
 	}
+
+  if (uint64_t(size) + uint64_t(size_increase) > UINT32_MAX)
+    ib::error() << "[size_overflow_compressed] Extending tablespace "
+               << space->id
+               << " from page number " << size
+               << " by " << size_increase
+               << " pages exceeds the maximum page number "
+               << UINT32_MAX;
 
 	if (!fil_space_extend(space, size + size_increase)) {
 		return(0);

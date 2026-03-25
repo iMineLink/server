@@ -1,0 +1,48 @@
+#
+# MDEV-38814: btr_cur_need_opposite_intention() should not
+# trigger index lock upgrade on the root page
+#
+# Test with simple table structure:
+# Single INT primary key
+# DATETIME column dt that starts NULL and gets updated to NOW()
+#
+# The NULL-to-DATETIME growth (0 → 5 bytes) makes
+# btr_cur_optimistic_update() return DB_OVERFLOW on a full page,
+# falling through to the pessimistic path (BTR_MODIFY_TREE).
+#
+# Simple rows (~15 bytes) are used to test basic index lock upgrade behavior.
+CREATE TABLE t1 (
+id INT NOT NULL,
+dt DATETIME NULL,
+PRIMARY KEY (id)
+) ENGINE=InnoDB;
+# Rows inserted with NULL DATETIME
+SELECT COUNT(*) AS rows_inserted FROM t1;
+rows_inserted
+1000
+SELECT COUNT(*) AS null_dt FROM t1 WHERE dt IS NULL;
+null_dt
+1000
+# Index lock upgrades during inserts
+SELECT @insert_upgrades AS index_lock_upgrades_insert;
+index_lock_upgrades_insert
+1
+SELECT @insert_root AS need_opposite_intention_root_insert;
+need_opposite_intention_root_insert
+1
+# Now update all rows (batch update)
+# This changes DATETIME from NULL to NOW(), triggering pessimistic path
+# due to record size change, even if pages have some free space.
+# Rows updated
+SELECT COUNT(*) AS null_dt FROM t1 WHERE dt IS NULL;
+null_dt
+0
+# Total index lock upgrades during the test
+SELECT @upgrades AS index_lock_upgrades;
+index_lock_upgrades
+101
+# Times btr_cur_need_opposite_intention() was called on root (returned false)
+SELECT @root AS need_opposite_intention_root;
+need_opposite_intention_root
+265
+DROP TABLE t1;

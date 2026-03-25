@@ -1032,6 +1032,11 @@ static SHOW_VAR innodb_status_variables[]= {
   {"have_snappy",     &(provider_service_snappy->is_loaded), SHOW_BOOL},
   {"have_punch_hole", &innodb_have_punch_hole, SHOW_BOOL},
 
+  {"btr_index_lock_upgrades",
+   &btr_cur_n_index_lock_upgrades, SHOW_SIZE_T},
+  {"btr_need_opposite_intention_root",
+   &btr_cur_n_need_opposite_intention_root, SHOW_SIZE_T},
+
   {"instant_alter_column",
    &export_vars.innodb_instant_alter_column, SHOW_SIZE_T},
 

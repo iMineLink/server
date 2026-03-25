@@ -75,6 +75,11 @@ enum btr_intention_t {
 	BTR_INTENTION_INSERT
 };
 
+/** Number of times index lock was upgraded from SX to X */
+Atomic_counter<size_t> btr_cur_n_index_lock_upgrades;
+/** Number of times btr_cur_need_opposite_intention() was called on the root */
+Atomic_counter<size_t> btr_cur_n_need_opposite_intention_root;
+
 /** For the index->lock scalability improvement, only possibility of clear
 performance regression observed was caused by grown huge history list length.
 That is because the exclusive use of index->lock also worked as reserving
@@ -782,15 +787,29 @@ to the intention.
 @param node_ptr_max_size the maximum size of a node pointer
 @param compress_limit    BTR_CUR_PAGE_COMPRESS_LIMIT(index)
 @param rec               record (current node_ptr)
+@param root_page_no      page number of the index root
 @return true if tree modification is needed */
 static bool btr_cur_need_opposite_intention(const buf_page_t &bpage,
                                             bool is_clust,
                                             btr_intention_t lock_intention,
                                             ulint node_ptr_max_size,
                                             ulint compress_limit,
-                                            const rec_t *rec)
+                                            const rec_t *rec,
+                                            uint32_t root_page_no)
 {
   ut_ad(bpage.frame == page_align(rec));
+  /* Every check below detects whether a child-level modification could
+  propagate through this page up to its parent (e.g. page split adding
+  a node pointer to the parent, or a merge/boundary change updating a
+  parent's node pointer).  The root has no parent and no siblings, so
+  none of those checks apply.  A root page split is handled by
+  btr_root_raise_and_insert(), which keeps the same root page number,
+  grows the tree downward, and only requires SX on the index lock. */
+  if (bpage.id().page_no() == root_page_no)
+  {
+    ++btr_cur_n_need_opposite_intention_root;
+    return false;
+  }
   if (UNIV_LIKELY_NULL(bpage.zip.data) &&
       !page_zip_available(&bpage.zip, is_clust, node_ptr_max_size, 1))
     return true;
@@ -1419,7 +1438,7 @@ release_tree:
         btr_cur_need_opposite_intention(block->page, index()->is_clust(),
                                         lock_intention,
                                         node_ptr_max_size, compress_limit,
-                                        page_cur.rec))
+                                        page_cur.rec, index()->page))
         goto need_opposite_intention;
 
 #ifdef BTR_CUR_HASH_ADAPT
@@ -1452,12 +1471,14 @@ release_tree:
     if (btr_cur_need_opposite_intention(block->page, index()->is_clust(),
                                         lock_intention,
                                         node_ptr_max_size, compress_limit,
-                                        page_cur.rec))
+                                        page_cur.rec, index()->page))
+    {
       /* If the rec is the first or last in the page for pessimistic
       delete intention, it might cause node_ptr insert for the upper
       level. We should change the intention and retry. */
     need_opposite_intention:
       return pessimistic_search_leaf(tuple, mode, mtr);
+    }
 
     if (detected_same_key_root || lock_intention != BTR_INTENTION_BOTH ||
         index()->is_unique() ||
@@ -1599,6 +1620,7 @@ ATTRIBUTE_COLD void mtr_t::index_lock_upgrade()
   index_lock *lock= static_cast<index_lock*>(slot.object);
   lock->u_x_upgrade(SRW_LOCK_CALL);
   slot.type= MTR_MEMO_X_LOCK;
+  ++btr_cur_n_index_lock_upgrades;
 }
 
 /** Mark a non-leaf page "least recently used", but avoid invoking
@@ -1995,7 +2017,8 @@ index_locked:
               btr_cur_need_opposite_intention(block->page, index->is_clust(),
                                               lock_intention,
                                               node_ptr_max_size,
-                                              compress_limit, page_cur.rec))
+                                              compress_limit, page_cur.rec,
+                                              index->page))
             goto need_opposite_intention;
         }
         else
@@ -2043,7 +2066,7 @@ index_locked:
     else if (btr_cur_need_opposite_intention(block->page, index->is_clust(),
                                              lock_intention,
                                              node_ptr_max_size, compress_limit,
-                                             page_cur.rec))
+                                             page_cur.rec, index->page))
     {
     need_opposite_intention:
       /* If the rec is the first or last in the page for pessimistic

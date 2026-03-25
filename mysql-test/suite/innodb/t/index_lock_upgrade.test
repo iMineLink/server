@@ -1,0 +1,89 @@
+--source include/have_innodb.inc
+--source include/have_innodb_16k.inc
+
+--echo #
+--echo # MDEV-38814: btr_cur_need_opposite_intention() should not
+--echo # trigger index lock upgrade on the root page
+--echo #
+
+--echo # Test with simple table structure:
+--echo # Single INT primary key
+--echo # DATETIME column dt that starts NULL and gets updated to NOW()
+--echo #
+--echo # The NULL-to-DATETIME growth (0 → 5 bytes) makes
+--echo # btr_cur_optimistic_update() return DB_OVERFLOW on a full page,
+--echo # falling through to the pessimistic path (BTR_MODIFY_TREE).
+--echo #
+--echo # Simple rows (~15 bytes) are used to test basic index lock upgrade behavior.
+CREATE TABLE t1 (
+  id INT NOT NULL,
+  dt DATETIME NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB;
+
+let $before = `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_index_lock_upgrades'`;
+let $before_root = `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_need_opposite_intention_root'`;
+
+--let $n_rows= 1000
+
+--disable_query_log
+--let $count= 0
+while ($count < $n_rows)
+{
+  --eval INSERT INTO t1 (id, dt) VALUES ($count + 1, NULL);
+  inc $count;
+}
+--enable_query_log
+
+--echo # Rows inserted with NULL DATETIME
+SELECT COUNT(*) AS rows_inserted FROM t1;
+SELECT COUNT(*) AS null_dt FROM t1 WHERE dt IS NULL;
+
+let $after_insert = `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+              WHERE VARIABLE_NAME = 'Innodb_btr_index_lock_upgrades'`;
+let $after_insert_root = `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+              WHERE VARIABLE_NAME = 'Innodb_btr_need_opposite_intention_root'`;
+
+--disable_query_log
+eval SET @insert_upgrades = $after_insert - $before;
+eval SET @insert_root = $after_insert_root - $before_root;
+--enable_query_log
+
+--echo # Index lock upgrades during inserts
+SELECT @insert_upgrades AS index_lock_upgrades_insert;
+SELECT @insert_root AS need_opposite_intention_root_insert;
+
+--echo # Now update all rows (batch update)
+--echo # This changes DATETIME from NULL to NOW(), triggering pessimistic path
+--echo # due to record size change, even if pages have some free space.
+
+--disable_query_log
+--let $count= 0
+while ($count < $n_rows)
+{
+  --eval UPDATE t1 SET dt = NOW() WHERE id = $count + 1;
+  inc $count;
+}
+--enable_query_log
+
+--echo # Rows updated
+SELECT COUNT(*) AS null_dt FROM t1 WHERE dt IS NULL;
+
+let $after = `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+              WHERE VARIABLE_NAME = 'Innodb_btr_index_lock_upgrades'`;
+let $after_root = `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+              WHERE VARIABLE_NAME = 'Innodb_btr_need_opposite_intention_root'`;
+
+--disable_query_log
+eval SET @upgrades = $after - $before;
+eval SET @root = $after_root - $before_root;
+--enable_query_log
+
+--echo # Total index lock upgrades during the test
+SELECT @upgrades AS index_lock_upgrades;
+--echo # Times btr_cur_need_opposite_intention() was called on root (returned false)
+SELECT @root AS need_opposite_intention_root;
+
+DROP TABLE t1;

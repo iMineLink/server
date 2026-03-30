@@ -44,6 +44,11 @@ Created 6/2/1994 Heikki Tuuri
 #include "row0sel.h" /* row_search_max_autoinc() */
 #include "log.h"
 
+/** Number of times btr_insert_into_right_sibling() was attempted (X held) */
+Atomic_counter<size_t> btr_cur_n_insert_right_sibling_x;
+/** Number of times btr_insert_into_right_sibling() was skipped (SX held) */
+Atomic_counter<size_t> btr_cur_n_insert_right_sibling_sx_skip;
+
 /**************************************************************//**
 Checks if the page in the cursor can be merged with given page.
 If necessary, re-organize the merge_page.
@@ -2870,10 +2875,22 @@ func_start:
 	ut_ad(mtr->memo_contains_flagged(block, MTR_MEMO_PAGE_X_FIX));
 	ut_ad(!page_is_empty(page));
 
-	/* try to insert to the next page if possible before split */
-	if (rec_t* rec = btr_insert_into_right_sibling(
-		    flags, cursor, offsets, *heap, tuple, n_ext, mtr)) {
-		return(rec);
+	/* Try to insert to the next page if possible before split.
+	This optimization may delete and re-insert node pointers at the
+	parent level (via btr_cur_pessimistic_delete() and
+	btr_insert_on_non_leaf_level()), which can cascade into splits
+	or merges of non-leaf pages whose siblings may not be latched.
+	btr_attach_half_pages() asserts MTR_MEMO_X_LOCK for such
+	unlatched sibling access, so we can only use this path when the
+	index lock is held in X mode. */
+	if (cursor->index()->lock.have_x()) {
+		++btr_cur_n_insert_right_sibling_x;
+		if (rec_t* rec = btr_insert_into_right_sibling(
+			    flags, cursor, offsets, *heap, tuple, n_ext, mtr)) {
+			return(rec);
+		}
+	} else {
+		++btr_cur_n_insert_right_sibling_sx_skip;
 	}
 
 	/* 1. Decide the split record; split_rec == NULL means that the

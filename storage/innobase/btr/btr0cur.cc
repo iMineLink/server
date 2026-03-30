@@ -824,8 +824,12 @@ static bool btr_cur_need_opposite_intention(const buf_page_t &bpage,
     if (lock_intention == BTR_INTENTION_DELETE)
       return false;
   }
-  else if (page_has_next(page) && page_rec_is_last(rec, page))
-    return true;
+  else
+  {
+    /* No special check is needed for btr_insert_into_right_sibling():
+    it is now guarded by index_lock::have_x() in
+    btr_page_split_and_insert(), so it is simply skipped under SX. */
+  }
   LIMIT_OPTIMISTIC_INSERT_DEBUG(page_get_n_recs(page), return true);
   const ulint max_size= page_get_max_insert_size_after_reorganize(page, 2);
   return max_size < BTR_CUR_PAGE_REORGANIZE_LIMIT + node_ptr_max_size ||
@@ -1592,16 +1596,6 @@ release_tree:
       break;
     case BTR_MODIFY_TREE:
       ut_ad(rw_latch == RW_X_LATCH);
-
-      if (lock_intention == BTR_INTENTION_INSERT &&
-          page_has_next(block->page.frame) &&
-          page_rec_is_last(page_cur.rec, block->page.frame))
-      {
-        /* btr_insert_into_right_sibling() might cause deleting node_ptr
-        at upper level */
-        mtr->rollback_to_savepoint(block_savepoint);
-        goto need_opposite_intention;
-      }
       break;
     default:
       ut_ad(rw_latch == RW_X_LATCH);

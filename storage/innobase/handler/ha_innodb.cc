@@ -1036,6 +1036,10 @@ static SHOW_VAR innodb_status_variables[]= {
    &btr_cur_n_index_lock_upgrades, SHOW_SIZE_T},
   {"btr_need_opposite_intention_root",
    &btr_cur_n_need_opposite_intention_root, SHOW_SIZE_T},
+  {"btr_insert_right_sibling_x",
+   &btr_cur_n_insert_right_sibling_x, SHOW_SIZE_T},
+  {"btr_insert_right_sibling_sx_skip",
+   &btr_cur_n_insert_right_sibling_sx_skip, SHOW_SIZE_T},
 
   {"instant_alter_column",
    &export_vars.innodb_instant_alter_column, SHOW_SIZE_T},

@@ -834,6 +834,10 @@ extern ulint	btr_cur_n_sea_old;
 extern Atomic_counter<size_t> btr_cur_n_index_lock_upgrades;
 /** Number of times btr_cur_need_opposite_intention() was called on the root */
 extern Atomic_counter<size_t> btr_cur_n_need_opposite_intention_root;
+/** Number of times btr_insert_into_right_sibling() was attempted (X held) */
+extern Atomic_counter<size_t> btr_cur_n_insert_right_sibling_x;
+/** Number of times btr_insert_into_right_sibling() was skipped (SX held) */
+extern Atomic_counter<size_t> btr_cur_n_insert_right_sibling_sx_skip;
 
 #ifdef UNIV_DEBUG
 /* Flag to limit optimistic insert records */

@@ -4732,14 +4732,14 @@ any_extern:
 		goto func_exit;
 	}
 
-	if (UNIV_UNLIKELY(page_get_data_size(page)
+	if (UNIV_UNLIKELY((new_rec_size < old_rec_size) && page_get_data_size(page)
 			  - old_rec_size + new_rec_size
 			  < BTR_CUR_PAGE_COMPRESS_LIMIT(index))) {
 		/* We may need to update the IBUF_BITMAP_FREE
 		bits after a reorganize that was done in
 		btr_cur_update_alloc_zip(). */
 
-		/* The page would become too empty */
+		/* The page would become too empty due to record shrinkage */
 		err = DB_UNDERFLOW;
 		goto func_exit;
 	}

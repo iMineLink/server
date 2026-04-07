@@ -11,14 +11,14 @@ id INT NOT NULL,
 dt DATETIME NULL,
 PRIMARY KEY (id)
 ) ENGINE=InnoDB;
-INSERT INTO t1 (id, dt) SELECT seq, '2025-01-01' + INTERVAL seq SECOND FROM seq_1_to_1000;
+INSERT INTO t1 (id, dt) SELECT seq, '2025-01-01' + INTERVAL seq SECOND FROM seq_1_to_100000;
 # Rows inserted with not-NULL DATETIME
 SELECT COUNT(*) AS rows_inserted FROM t1;
 rows_inserted
-1000
+100000
 SELECT COUNT(DISTINCT dt) AS distinct_timestamps FROM t1;
 distinct_timestamps
-1000
+100000
 # Index lock upgrades during inserts
 SELECT @lu01 AS index_lock_upgrades_insert;
 index_lock_upgrades_insert
@@ -34,7 +34,7 @@ optim_err_overflows_insert
 0
 SELECT @ps01 AS index_page_splits_insert;
 index_page_splits_insert
-8
+772
 SELECT @ma01 AS index_page_merge_attempts_insert;
 index_page_merge_attempts_insert
 0
@@ -59,10 +59,10 @@ index_lock_upgrades_update
 0
 SELECT @pu12 AS pessimistic_update_calls_update;
 pessimistic_update_calls_update
-66
+65
 SELECT @ou12 AS optim_err_underflows_update;
 optim_err_underflows_update
-66
+65
 SELECT @oo12 AS optim_err_overflows_update;
 optim_err_overflows_update
 0
@@ -71,13 +71,13 @@ index_page_splits_update
 0
 SELECT @ma12 AS index_page_merge_attempts_update;
 index_page_merge_attempts_update
-66
+65
 SELECT @ms12 AS index_page_merge_successful_update;
 index_page_merge_successful_update
-1
+0
 SELECT @rs12 AS index_page_reorg_successful_update;
 index_page_reorg_successful_update
-1
+0
 SELECT @pd12 AS index_page_discards_update;
 index_page_discards_update
 0

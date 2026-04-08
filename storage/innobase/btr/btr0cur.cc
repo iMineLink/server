@@ -119,6 +119,14 @@ ulint	btr_cur_n_sea_old;
 #ifdef UNIV_DEBUG
 /* Flag to limit optimistic insert records */
 uint	btr_cur_limit_optimistic_insert_debug;
+/** Number of times index lock was upgraded from SX to X */
+Atomic_counter<size_t> btr_cur_n_index_lock_upgrades;
+/** Number of times btr_cur_pessimistic_update() was called */
+Atomic_counter<size_t> btr_cur_pessimistic_update_calls;
+/** Number of times DB_UNDERFLOW was returned as optimistic update error in btr_cur_pessimistic_update() */
+Atomic_counter<size_t> btr_cur_pessimistic_update_optim_err_underflows;
+/** Number of times DB_OVERFLOW was returned as optimistic update error in btr_cur_pessimistic_update() */
+Atomic_counter<size_t> btr_cur_pessimistic_update_optim_err_overflows;
 #endif /* UNIV_DEBUG */
 
 /** In the optimistic insert, if the insert does not fit, but this much space
@@ -2073,6 +2081,7 @@ need_opposite_intention:
 					tree_blocks[n_releases]);
 			}
 
+			ut_d(++btr_cur_n_index_lock_upgrades);
 			lock_intention = BTR_INTENTION_BOTH;
 
 			page_id.set_page_no(index->page);
@@ -2828,6 +2837,7 @@ btr_cur_open_at_index_side_func(
 					tree_blocks[n_releases]);
 			}
 
+			ut_d(++btr_cur_n_index_lock_upgrades);
 			lock_intention = BTR_INTENTION_BOTH;
 
 			page_id.set_page_no(dict_index_get_page(index));
@@ -3123,6 +3133,7 @@ btr_cur_open_at_rnd_pos_func(
 					tree_blocks[n_releases]);
 			}
 
+			ut_d(++btr_cur_n_index_lock_upgrades);
 			lock_intention = BTR_INTENTION_BOTH;
 
 			page_id.set_page_no(dict_index_get_page(index));
@@ -4940,6 +4951,8 @@ btr_cur_pessimistic_update(
 	page_zip = buf_block_get_page_zip(block);
 	index = cursor->index;
 
+	ut_d(++btr_cur_pessimistic_update_calls);
+
 	ut_ad(mtr_memo_contains_flagged(mtr, dict_index_get_lock(index),
 					MTR_MEMO_X_LOCK |
 					MTR_MEMO_SX_LOCK));
@@ -4963,6 +4976,9 @@ btr_cur_pessimistic_update(
 		flags | BTR_KEEP_IBUF_BITMAP,
 		cursor, offsets, offsets_heap, update,
 		cmpl_info, thr, trx_id, mtr);
+
+	ut_d(btr_cur_pessimistic_update_optim_err_underflows += (err == DB_UNDERFLOW));
+	ut_d(btr_cur_pessimistic_update_optim_err_overflows += (err == DB_OVERFLOW));
 
 	switch (err) {
 	case DB_ZIP_OVERFLOW:

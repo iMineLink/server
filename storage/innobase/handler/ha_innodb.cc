@@ -1220,6 +1220,17 @@ static SHOW_VAR innodb_status_variables[]= {
   {"encryption_num_key_requests",
    (char*) &export_vars.innodb_encryption_key_requests, SHOW_LONGLONG},
 
+#ifdef UNIV_DEBUG
+  {"btr_cur_n_index_lock_upgrades",
+   &btr_cur_n_index_lock_upgrades, SHOW_ULONGLONG},
+  {"btr_cur_pessimistic_update_calls",
+   &btr_cur_pessimistic_update_calls, SHOW_ULONGLONG},
+  {"btr_cur_pessimistic_update_optim_err_underflows",
+   &btr_cur_pessimistic_update_optim_err_underflows, SHOW_ULONGLONG},
+  {"btr_cur_pessimistic_update_optim_err_overflows",
+   &btr_cur_pessimistic_update_optim_err_overflows, SHOW_ULONGLONG},
+#endif /* UNIV_DEBUG */
+
   {NullS, NullS, SHOW_LONG}
 };
 

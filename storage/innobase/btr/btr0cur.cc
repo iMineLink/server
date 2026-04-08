@@ -3810,6 +3810,8 @@ btr_cur_pessimistic_update(
 
 	ut_ad(mtr->memo_contains_flagged(&index->lock, MTR_MEMO_X_LOCK |
 					 MTR_MEMO_SX_LOCK));
+	// Crash if line below is uncommented (not like in 10.4)
+	//ut_ad(!mtr->memo_contains_flagged(&index->lock, MTR_MEMO_X_LOCK));
 	ut_ad(mtr->memo_contains_flagged(block, MTR_MEMO_PAGE_X_FIX));
 #if defined UNIV_ZIP_DEBUG || defined UNIV_DEBUG
 	page_zip_des_t*	page_zip = buf_block_get_page_zip(block);

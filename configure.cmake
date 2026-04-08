@@ -681,7 +681,7 @@ CHECK_C_SOURCE_COMPILES("
 #ifdef __cplusplus
 extern \"C\" void (*signal (int, void (*)(int)))(int);
 #else
-void (*signal ()) ();
+void (*signal (int, void (*)(int)))(int);
 #endif
 int main(int ac, char **av) {}
 " SIGNAL_RETURN_TYPE_IS_VOID)

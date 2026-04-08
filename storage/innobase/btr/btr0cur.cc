@@ -4956,6 +4956,8 @@ btr_cur_pessimistic_update(
 	ut_ad(mtr_memo_contains_flagged(mtr, dict_index_get_lock(index),
 					MTR_MEMO_X_LOCK |
 					MTR_MEMO_SX_LOCK));
+	ut_ad(!mtr_memo_contains(mtr, dict_index_get_lock(index),
+				 MTR_MEMO_X_LOCK));
 	ut_ad(mtr_memo_contains(mtr, block, MTR_MEMO_PAGE_X_FIX));
 #ifdef UNIV_ZIP_DEBUG
 	ut_a(!page_zip || page_zip_validate(page_zip, page, index));

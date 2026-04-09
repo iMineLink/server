@@ -842,14 +842,23 @@ static bool btr_cur_need_opposite_intention(const buf_page_t &bpage,
   parent.  See the comment and assertion in
   btr_cur_search_to_nth_level() for why cascades cannot reach the
   unlatched root under SX. */
-  if (bpage.id().page_no() == index.page)
+  const page_id_t id= bpage.id();
+  if (id.page_no() == index.page)
   {
     ut_d(++btr_cur_n_need_opposite_intention_root);
+    ut_d(fprintf(stderr,
+                 "need_opposite_intention: page %u:%u => false (root)\n",
+                 unsigned{id.space()}, unsigned{id.page_no()}));
     return false;
   }
   if (UNIV_LIKELY_NULL(bpage.zip.data) &&
       !page_zip_available(&bpage.zip, index.is_clust(), node_ptr_max_size, 1))
+  {
+    ut_d(fprintf(stderr,
+                 "need_opposite_intention: page %u:%u => true (zip full)\n",
+                 unsigned{id.space()}, unsigned{id.page_no()}));
     return true;
+  }
   const page_t *const page= bpage.frame;
   if (lock_intention != BTR_INTENTION_INSERT)
   {
@@ -857,16 +866,41 @@ static bool btr_cur_need_opposite_intention(const buf_page_t &bpage,
     if (!page_has_siblings(page) ||
         page_rec_is_first(rec, page) || page_rec_is_last(rec, page) ||
         page_get_data_size(page) < node_ptr_max_size + compress_limit)
+    {
+      ut_d(fprintf(stderr,
+                   "need_opposite_intention: page %u:%u => true"
+                   " (boundary/compress)\n",
+                   unsigned{id.space()}, unsigned{id.page_no()}));
       return true;
+    }
     if (lock_intention == BTR_INTENTION_DELETE)
+    {
+      ut_d(fprintf(stderr,
+                   "need_opposite_intention: page %u:%u => false (delete ok)\n",
+                   unsigned{id.space()}, unsigned{id.page_no()}));
       return false;
+    }
   }
   else if (page_has_next(page) && page_rec_is_last(rec, page))
+  {
+    ut_d(fprintf(stderr,
+                 "need_opposite_intention: page %u:%u => true"
+                 " (insert last rec)\n",
+                 unsigned{id.space()}, unsigned{id.page_no()}));
     return true;
+  }
   LIMIT_OPTIMISTIC_INSERT_DEBUG(page_get_n_recs(page), return true);
   const ulint max_size= page_get_max_insert_size_after_reorganize(page, 2);
-  return max_size < BTR_CUR_PAGE_REORGANIZE_LIMIT + node_ptr_max_size ||
-    max_size < node_ptr_max_size * 2;
+  const bool need= max_size < BTR_CUR_PAGE_REORGANIZE_LIMIT + node_ptr_max_size
+    || max_size < node_ptr_max_size * 2;
+  ut_d(fprintf(stderr,
+               "need_opposite_intention: page %u:%u => %s"
+               " (max_size=%zu, limit=%zu)\n",
+               unsigned{id.space()}, unsigned{id.page_no()},
+               need ? "true" : "false",
+               max_size,
+               BTR_CUR_PAGE_REORGANIZE_LIMIT + node_ptr_max_size));
+  return need;
 }
 
 /**

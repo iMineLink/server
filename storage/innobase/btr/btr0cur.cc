@@ -1218,6 +1218,7 @@ dberr_t btr_cur_t::search_leaf(const dtuple_t *tuple, page_cur_mode_t mode,
     ut_ad(low_match != uint16_t(~0U) || mode != PAGE_CUR_LE);
     ++btr_cur_n_sea;
 
+    ut_d(fprintf(stderr, "search_leaf END: err=0 (AHI hit)\n"));
     return DB_SUCCESS;
   }
   else
@@ -1529,7 +1530,10 @@ release_tree:
       delete intention, it might cause node_ptr insert for the upper
       level. We should change the intention and retry. */
     need_opposite_intention:
+    {
+      ut_d(fprintf(stderr, "search_leaf END: need_opposite_intention\n"));
       return pessimistic_search_leaf(tuple, mode, mtr);
+    }
 
     if (detected_same_key_root || lock_intention != BTR_INTENTION_BOTH ||
         index()->is_unique() ||

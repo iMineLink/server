@@ -40,6 +40,7 @@ mtr_t::~mtr_t()= default;
 void mtr_t::start() {}
 void mtr_t::commit() {}
 void mtr_t::rollback_to_savepoint(ulint, ulint) {}
+void mtr_t::print_memo(const char *) const {}
 void small_vector_base::grow_by_1(void *, size_t) noexcept {}
 void buf_inc_get(trx_t*) noexcept {}
 

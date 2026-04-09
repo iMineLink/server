@@ -192,6 +192,7 @@ void mtr_t::start()
 
   ut_d(m_start= true);
   ut_d(m_commit= false);
+  ut_d(fprintf(stderr, "mtr_t::start: %p\n", this));
   ut_d(m_freeing_tree= false);
 
   m_last= nullptr;
@@ -472,6 +473,7 @@ void mtr_t::commit_log(mtr_t *mtr, std::pair<lsn_t,lsn_t> lsns) noexcept
 void mtr_t::commit()
 {
   ut_ad(is_active());
+  ut_d(print_memo("mtr_t::commit: "));
 
   /* This is a dirty read, for debugging. */
   ut_ad(!m_modifications || !recv_no_log_write);
@@ -530,6 +532,7 @@ void mtr_t::rollback_to_savepoint(ulint begin, ulint end)
   }
 
   m_memo.erase(m_memo.begin() + begin, m_memo.begin() + end);
+  ut_d(print_memo("rollback_to_savepoint: "));
 }
 
 /** Set create_lsn. */
@@ -1695,6 +1698,57 @@ void mtr_t::free(const fil_space_t &space, uint32_t offset)
   if (is_logged())
     m_log.close(log_write<FREE_PAGE>(id, nullptr));
 }
+
+#ifdef UNIV_DEBUG
+void mtr_t::print_memo(const char *prefix) const
+{
+  const size_t n= m_memo.size();
+  fprintf(stderr, "%smtr_t::print_memo: %zu slots\n",
+          prefix ? prefix : "", n);
+
+  for (size_t i= 0; i < n; i++)
+  {
+    const mtr_memo_slot_t &slot= m_memo[i];
+
+    if (!slot.object)
+    {
+      fprintf(stderr, "  [%zu] (released)\n", i);
+      continue;
+    }
+
+    const char *type_name;
+    switch (slot.type) {
+    case MTR_MEMO_PAGE_S_FIX:      type_name= "PAGE_S_FIX"; break;
+    case MTR_MEMO_PAGE_X_FIX:      type_name= "PAGE_X_FIX"; break;
+    case MTR_MEMO_PAGE_SX_FIX:     type_name= "PAGE_SX_FIX"; break;
+    case MTR_MEMO_BUF_FIX:         type_name= "BUF_FIX"; break;
+    case MTR_MEMO_PAGE_X_MODIFY:   type_name= "PAGE_X_MODIFY"; break;
+    case MTR_MEMO_PAGE_SX_MODIFY:  type_name= "PAGE_SX_MODIFY"; break;
+    case MTR_MEMO_S_LOCK:          type_name= "S_LOCK"; break;
+    case MTR_MEMO_X_LOCK:          type_name= "X_LOCK"; break;
+    case MTR_MEMO_SX_LOCK:         type_name= "SX_LOCK"; break;
+    case MTR_MEMO_SPACE_X_LOCK:    type_name= "SPACE_X_LOCK"; break;
+    default:                       type_name= "UNKNOWN"; break;
+    }
+
+    if (slot.type < MTR_MEMO_S_LOCK)
+    {
+      const buf_block_t *block=
+        static_cast<const buf_block_t*>(slot.object);
+      const page_id_t id= block->page.id();
+      const uint16_t level=
+        mach_read_from_2(PAGE_HEADER + PAGE_LEVEL + block->page.frame);
+      fprintf(stderr, "  [%zu] %s: page %u:%u (level %u)\n",
+              i, type_name,
+              unsigned{id.space()}, unsigned{id.page_no()},
+              unsigned{level});
+    }
+    else
+      fprintf(stderr, "  [%zu] %s: object %p\n",
+              i, type_name, slot.object);
+  }
+}
+#endif /* UNIV_DEBUG */
 
 void small_vector_base::grow_by_1(void *small, size_t element_size) noexcept
 {

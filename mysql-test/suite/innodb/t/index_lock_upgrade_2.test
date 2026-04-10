@@ -159,6 +159,62 @@ SELECT @ms12 AS index_page_merge_successful_update;
 SELECT @rs12 AS index_page_reorg_successful_update;
 SELECT @pd12 AS index_page_discards_update;
 
+--echo # Now delete almost all rows
+DELETE FROM t1 WHERE id > 1;
+
+--echo # Rows remaining
+SELECT COUNT(*) AS rows_remaining FROM t1;
+
+let $lu3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
+let $pu3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
+let $ou3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
+let $oo3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_overflows'`;
+let $ps3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_splits'`;
+let $ma3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_attempts'`;
+let $ms3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_successful'`;
+let $rs3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_reorg_successful'`;
+let $pd3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_discards'`;
+
+--disable_query_log
+eval SET @lu23= $lu3 - $lu2;
+eval SET @pi23= $pi3 - $pi2;
+eval SET @pu23= $pu3 - $pu2;
+eval SET @pe23= $pe3 - $pe2;
+eval SET @ou23= $ou3 - $ou2;
+eval SET @oo23= $oo3 - $oo2;
+eval SET @ps23= $ps3 - $ps2;
+eval SET @ma23= $ma3 - $ma2;
+eval SET @ms23= $ms3 - $ms2;
+eval SET @rs23= $rs3 - $rs2;
+eval SET @pd23= $pd3 - $pd2;
+--enable_query_log
+
+--echo # Index lock upgrades during deletes
+SELECT @lu23 AS index_lock_upgrades_delete;
+SELECT @pi23 AS pessimistic_insert_calls_delete;
+SELECT @pu23 AS pessimistic_update_calls_delete;
+SELECT @pe23 AS pessimistic_delete_calls_delete;
+SELECT @ou23 AS optim_err_underflows_delete;
+SELECT @oo23 AS optim_err_overflows_delete;
+SELECT @ps23 AS index_page_splits_delete;
+SELECT @ma23 AS index_page_merge_attempts_delete;
+SELECT @ms23 AS index_page_merge_successful_delete;
+SELECT @rs23 AS index_page_reorg_successful_delete;
+SELECT @pd23 AS index_page_discards_delete;
+
 --disable_query_log
 SET GLOBAL innodb_monitor_disable= 'module_index';
 --disable_warnings

@@ -45,7 +45,7 @@ let $rs0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
 let $pd0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_discards'`;
 
-INSERT INTO t1 (id, dt) SELECT seq, '2025-01-01' + INTERVAL seq SECOND FROM seq_1_to_1000;
+INSERT INTO t1 (id, dt) SELECT seq, '2025-01-01' + INTERVAL seq SECOND FROM seq_1_to_100000;
 
 --echo # Rows inserted with not-NULL DATETIME
 SELECT COUNT(*) AS rows_inserted FROM t1;
@@ -103,7 +103,7 @@ SELECT @pd01 AS index_page_discards_insert;
 
 --echo # Now update all rows (batch update)
 
-UPDATE t1 JOIN seq_1_to_1000 s ON t1.id = s.seq
+UPDATE t1 JOIN seq_1_to_100000 s ON t1.id = s.seq
 SET t1.dt= '2026-01-01' + INTERVAL s.seq SECOND;
 
 --echo # Rows updated

@@ -26,10 +26,10 @@ distinct_timestamps
 # Index lock upgrades during inserts (no reduction w.r.t. root page checks)
 SELECT @u01 AS index_lock_upgrades_insert;
 index_lock_upgrades_insert
-5
+0
 SELECT @r01 AS need_opposite_intention_root_insert;
 need_opposite_intention_root_insert
-5
+0
 # Now update all rows (batch update)
 # This changes DATETIME from NULL to a distinct timestamp per row,
 # triggering the pessimistic path due to record size change.
@@ -42,8 +42,8 @@ distinct_timestamps
 # Index lock upgrades during updates (with reduction w.r.t. root page checks)
 SELECT @u12 AS index_lock_upgrades_update;
 index_lock_upgrades_update
-120
+0
 SELECT @r12 AS need_opposite_intention_root_update;
 need_opposite_intention_root_update
-414
+0
 DROP TABLE t1;

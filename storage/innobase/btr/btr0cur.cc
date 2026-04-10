@@ -1509,6 +1509,7 @@ release_tree:
     ut_ad(low_match != uint16_t(~0U) || mode != PAGE_CUR_LE);
 
     if (latch_mode == BTR_MODIFY_TREE &&
+        block_savepoint < savepoint + tree_height &&
         btr_cur_need_opposite_intention(block->page, *index(),
                                         lock_intention,
                                         node_ptr_max_size, compress_limit,
@@ -1542,7 +1543,8 @@ release_tree:
   default:
     break;
   case BTR_MODIFY_TREE:
-    if (btr_cur_need_opposite_intention(block->page, *index(),
+    if (block_savepoint < savepoint + tree_height - height &&
+        btr_cur_need_opposite_intention(block->page, *index(),
                                         lock_intention,
                                         node_ptr_max_size, compress_limit,
                                         page_cur.rec))
@@ -2044,6 +2046,7 @@ index_locked:
 
   uint32_t page= index->page;
 
+  ulint root_level= 0;
   for (ulint height= ULINT_UNDEFINED;;)
   {
     ut_ad(n_blocks < BTR_MAX_LEVELS);
@@ -2069,7 +2072,7 @@ index_locked:
     if (height == ULINT_UNDEFINED)
     {
       /* We are in the root node */
-      height= l;
+      height= root_level= l;
       if (height);
       else if (upper_rw_latch != root_leaf_rw_latch)
       {
@@ -2101,6 +2104,7 @@ index_locked:
             break;
 
           if (!index->lock.have_x() &&
+              n_blocks < root_level &&
               btr_cur_need_opposite_intention(block->page, *index,
                                               lock_intention,
                                               node_ptr_max_size,
@@ -2149,7 +2153,8 @@ index_locked:
       if (!height && first && first_access)
         buf_read_ahead_linear(page_id_t(block->page.id().space(), page));
     }
-    else if (btr_cur_need_opposite_intention(block->page, *index,
+    else if (n_blocks < root_level - height &&
+             btr_cur_need_opposite_intention(block->page, *index,
                                              lock_intention,
                                              node_ptr_max_size, compress_limit,
                                              page_cur.rec))

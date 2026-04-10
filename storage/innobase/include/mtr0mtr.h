@@ -333,7 +333,6 @@ public:
     ut_ad(slot.type <= MTR_MEMO_BUF_FIX);
     ut_ad(type < MTR_MEMO_S_LOCK);
     slot.type= type;
-    ut_d(print_memo("lock_register: "));
   }
 
   /** Upgrade U locks on a block to X
@@ -373,10 +372,6 @@ public:
 
   /** @return whether this mini-transaction modifies persistent data */
   bool has_modifications() const { return m_modifications; }
-
-  /** Print the contents of the memo (latched pages and locks) to stderr,
-  for debugging purposes. */
-  void print_memo(const char *prefix= nullptr) const;
 #endif /* UNIV_DEBUG */
 
   /** Push a buffer page to an the memo.
@@ -425,7 +420,6 @@ public:
         m_made_dirty= block->page.oldest_modification() <= 1;
     }
     m_memo.emplace_back(mtr_memo_slot_t{block, type});
-    ut_d(print_memo("memo_push(page): "));
   }
 
   /** Push an index lock or tablespace latch to the memo.
@@ -436,7 +430,6 @@ public:
     ut_ad(is_active());
     ut_ad(type >= MTR_MEMO_S_LOCK);
     m_memo.emplace_back(mtr_memo_slot_t{object, type});
-    ut_d(print_memo("memo_push(lock): "));
   }
 
   /** @return the size of the log */

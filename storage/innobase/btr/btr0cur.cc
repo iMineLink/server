@@ -115,37 +115,6 @@ Atomic_counter<size_t> btr_cur_pessimistic_update_optim_err_underflows;
 Atomic_counter<size_t> btr_cur_pessimistic_update_optim_err_overflows;
 #endif /* UNIV_DEBUG */
 
-#ifdef UNIV_DEBUG
-static const char *btr_latch_mode_name(btr_latch_mode m)
-{
-  switch (m & ~(BTR_LATCH_FOR_INSERT | BTR_LATCH_FOR_DELETE |
-                BTR_ALREADY_S_LATCHED)) {
-  case BTR_SEARCH_LEAF:       return "SEARCH_LEAF";
-  case BTR_MODIFY_LEAF:       return "MODIFY_LEAF";
-  case BTR_MODIFY_ROOT_AND_LEAF: return "MODIFY_ROOT_AND_LEAF";
-  case BTR_NO_LATCHES:        return "NO_LATCHES";
-  case BTR_SEARCH_PREV:       return "SEARCH_PREV";
-  case BTR_MODIFY_TREE:       return "MODIFY_TREE";
-  case BTR_CONT_MODIFY_TREE:  return "CONT_MODIFY_TREE";
-  default:                    return "UNKNOWN";
-  }
-}
-
-static void btr_latch_mode_print(const char *func, btr_latch_mode m)
-{
-  const char *flags= "";
-  if ((m & BTR_LATCH_FOR_DELETE) && (m & BTR_LATCH_FOR_INSERT))
-    flags= "|FOR_DELETE|FOR_INSERT";
-  else if (m & BTR_LATCH_FOR_DELETE)
-    flags= "|FOR_DELETE";
-  else if (m & BTR_LATCH_FOR_INSERT)
-    flags= "|FOR_INSERT";
-  fprintf(stderr, "%s: latch_mode=%s%s%s\n", func,
-          btr_latch_mode_name(m), flags,
-          (m & BTR_ALREADY_S_LATCHED) ? "|ALREADY_S_LATCHED" : "");
-}
-#endif /* UNIV_DEBUG */
-
 /** In the optimistic insert, if the insert does not fit, but this much space
 can be released by page reorganize, then it is reorganized */
 #define BTR_CUR_PAGE_REORGANIZE_LIMIT	(srv_page_size / 32)
@@ -1120,7 +1089,6 @@ static int btr_latch_prev(rw_lock_type_t rw_latch,
 dberr_t btr_cur_t::search_leaf(const dtuple_t *tuple, page_cur_mode_t mode,
                                btr_latch_mode latch_mode, mtr_t *mtr)
 {
-  ut_d(btr_latch_mode_print("search_leaf START", latch_mode));
   ut_ad(index()->is_btree());
 
   buf_block_t *guess;
@@ -1249,7 +1217,6 @@ dberr_t btr_cur_t::search_leaf(const dtuple_t *tuple, page_cur_mode_t mode,
     ut_ad("corrupted" == 0); // FIXME: remove this
     err= DB_CORRUPTION;
   func_exit:
-    ut_d(fprintf(stderr, "search_leaf END: err=%d\n", int(err)));
     if (UNIV_LIKELY_NULL(heap))
       mem_heap_free(heap);
     return err;
@@ -1641,7 +1608,6 @@ ATTRIBUTE_COLD void mtr_t::index_lock_upgrade()
   lock->u_x_upgrade(SRW_LOCK_CALL);
   slot.type= MTR_MEMO_X_LOCK;
   ut_d(++btr_cur_n_index_lock_upgrades);
-  ut_d(print_memo("index_lock_upgrade: "));
 }
 
 /** Mark a non-leaf page "least recently used", but avoid invoking
@@ -1656,7 +1622,6 @@ ATTRIBUTE_COLD
 dberr_t btr_cur_t::pessimistic_search_leaf(const dtuple_t *tuple,
                                            page_cur_mode_t mode, mtr_t *mtr)
 {
-  ut_d(fprintf(stderr, "pessimistic_search_leaf START\n"));
   ut_ad(index()->is_btree());
 
   rec_offs offsets_[REC_OFFS_NORMAL_SIZE];
@@ -1719,7 +1684,6 @@ dberr_t btr_cur_t::pessimistic_search_leaf(const dtuple_t *tuple,
     }
 
   func_exit:
-    ut_d(fprintf(stderr, "pessimistic_search_leaf END: err=%d\n", int(err)));
     if (UNIV_LIKELY_NULL(heap))
       mem_heap_free(heap);
     return err;
@@ -1832,7 +1796,6 @@ dberr_t btr_cur_search_to_nth_level(ulint level,
   corrupted:
     err= DB_CORRUPTION;
   func_exit:
-    ut_d(fprintf(stderr, "open_leaf END: err=%d\n", int(err)));
     if (UNIV_LIKELY_NULL(heap))
       mem_heap_free(heap);
     return err;
@@ -1912,7 +1875,6 @@ search_loop:
 dberr_t btr_cur_t::open_leaf(bool first, dict_index_t *index,
                              btr_latch_mode latch_mode, mtr_t *mtr)
 {
-  ut_d(btr_latch_mode_print("open_leaf START", latch_mode));
   ulint n_blocks= 0;
   mem_heap_t *heap= nullptr;
   rec_offs offsets_[REC_OFFS_NORMAL_SIZE];

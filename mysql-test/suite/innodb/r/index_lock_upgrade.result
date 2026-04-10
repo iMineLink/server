@@ -26,8 +26,14 @@ distinct_timestamps
 SELECT @lu01 AS index_lock_upgrades_insert;
 index_lock_upgrades_insert
 5
+SELECT @pi01 AS pessimistic_insert_calls_insert;
+pessimistic_insert_calls_insert
+6
 SELECT @pu01 AS pessimistic_update_calls_insert;
 pessimistic_update_calls_insert
+0
+SELECT @pe01 AS pessimistic_delete_calls_insert;
+pessimistic_delete_calls_insert
 0
 SELECT @ou01 AS optim_err_underflows_insert;
 optim_err_underflows_insert
@@ -63,9 +69,15 @@ distinct_timestamps
 SELECT @lu12 AS index_lock_upgrades_update;
 index_lock_upgrades_update
 414
+SELECT @pi12 AS pessimistic_insert_calls_update;
+pessimistic_insert_calls_update
+5
 SELECT @pu12 AS pessimistic_update_calls_update;
 pessimistic_update_calls_update
 414
+SELECT @pe12 AS pessimistic_delete_calls_update;
+pessimistic_delete_calls_update
+0
 SELECT @ou12 AS optim_err_underflows_update;
 optim_err_underflows_update
 300

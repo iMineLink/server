@@ -1074,8 +1074,12 @@ static SHOW_VAR innodb_status_variables[]= {
 #ifdef UNIV_DEBUG
   {"btr_cur_n_index_lock_upgrades",
    &btr_cur_n_index_lock_upgrades, SHOW_SIZE_T},
+  {"btr_cur_pessimistic_insert_calls",
+   &btr_cur_pessimistic_insert_calls, SHOW_SIZE_T},
   {"btr_cur_pessimistic_update_calls",
    &btr_cur_pessimistic_update_calls, SHOW_SIZE_T},
+  {"btr_cur_pessimistic_delete_calls",
+   &btr_cur_pessimistic_delete_calls, SHOW_SIZE_T},
   {"btr_cur_pessimistic_update_optim_err_underflows",
    &btr_cur_pessimistic_update_optim_err_underflows, SHOW_SIZE_T},
   {"btr_cur_pessimistic_update_optim_err_overflows",

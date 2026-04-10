@@ -24,8 +24,12 @@ SET GLOBAL innodb_monitor_enable= 'module_index';
 
 let $lu0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
 let $pu0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
 let $ou0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
 let $oo0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
@@ -49,8 +53,12 @@ SELECT COUNT(DISTINCT dt) AS distinct_timestamps FROM t1;
 
 let $lu1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
 let $pu1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
 let $ou1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
 let $oo1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
@@ -68,7 +76,9 @@ let $pd1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
 
 --disable_query_log
 eval SET @lu01= $lu1 - $lu0;
+eval SET @pi01= $pi1 - $pi0;
 eval SET @pu01= $pu1 - $pu0;
+eval SET @pe01= $pe1 - $pe0;
 eval SET @ou01= $ou1 - $ou0;
 eval SET @oo01= $oo1 - $oo0;
 eval SET @ps01= $ps1 - $ps0;
@@ -80,7 +90,9 @@ eval SET @pd01= $pd1 - $pd0;
 
 --echo # Index lock upgrades during inserts
 SELECT @lu01 AS index_lock_upgrades_insert;
+SELECT @pi01 AS pessimistic_insert_calls_insert;
 SELECT @pu01 AS pessimistic_update_calls_insert;
+SELECT @pe01 AS pessimistic_delete_calls_insert;
 SELECT @ou01 AS optim_err_underflows_insert;
 SELECT @oo01 AS optim_err_overflows_insert;
 SELECT @ps01 AS index_page_splits_insert;
@@ -99,8 +111,12 @@ SELECT COUNT(DISTINCT dt) AS distinct_timestamps FROM t1;
 
 let $lu2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
 let $pu2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
 let $ou2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
 let $oo2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
@@ -118,7 +134,9 @@ let $pd2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
 
 --disable_query_log
 eval SET @lu12= $lu2 - $lu1;
+eval SET @pi12= $pi2 - $pi1;
 eval SET @pu12= $pu2 - $pu1;
+eval SET @pe12= $pe2 - $pe1;
 eval SET @ou12= $ou2 - $ou1;
 eval SET @oo12= $oo2 - $oo1;
 eval SET @ps12= $ps2 - $ps1;
@@ -130,7 +148,9 @@ eval SET @pd12= $pd2 - $pd1;
 
 --echo # Index lock upgrades during updates
 SELECT @lu12 AS index_lock_upgrades_update;
+SELECT @pi12 AS pessimistic_insert_calls_update;
 SELECT @pu12 AS pessimistic_update_calls_update;
+SELECT @pe12 AS pessimistic_delete_calls_update;
 SELECT @ou12 AS optim_err_underflows_update;
 SELECT @oo12 AS optim_err_overflows_update;
 SELECT @ps12 AS index_page_splits_update;

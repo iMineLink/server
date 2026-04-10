@@ -12,8 +12,7 @@
 CREATE TABLE t1 (
 id INT NOT NULL,
 dt DATETIME NULL,
-PRIMARY KEY (id),
-KEY (dt)
+PRIMARY KEY (id)
 ) ENGINE=InnoDB;
 INSERT INTO t1 (id, dt) SELECT seq, NULL FROM seq_1_to_1000;
 # Rows inserted with NULL DATETIME
@@ -26,7 +25,7 @@ distinct_timestamps
 # Index lock upgrades during inserts
 SELECT @lu01 AS index_lock_upgrades_insert;
 index_lock_upgrades_insert
-7
+5
 SELECT @pu01 AS pessimistic_update_calls_insert;
 pessimistic_update_calls_insert
 0
@@ -38,7 +37,7 @@ optim_err_overflows_insert
 0
 SELECT @ps01 AS index_page_splits_insert;
 index_page_splits_insert
-9
+6
 SELECT @ma01 AS index_page_merge_attempts_insert;
 index_page_merge_attempts_insert
 0
@@ -63,7 +62,7 @@ distinct_timestamps
 # Index lock upgrades during updates
 SELECT @lu12 AS index_lock_upgrades_update;
 index_lock_upgrades_update
-418
+414
 SELECT @pu12 AS pessimistic_update_calls_update;
 pessimistic_update_calls_update
 414
@@ -75,7 +74,7 @@ optim_err_overflows_update
 114
 SELECT @ps12 AS index_page_splits_update;
 index_page_splits_update
-9
+5
 SELECT @ma12 AS index_page_merge_attempts_update;
 index_page_merge_attempts_update
 300

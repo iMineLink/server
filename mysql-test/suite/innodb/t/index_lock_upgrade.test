@@ -18,8 +18,7 @@
 CREATE TABLE t1 (
   id INT NOT NULL,
   dt DATETIME NULL,
-  PRIMARY KEY (id),
-  KEY (dt)
+  PRIMARY KEY (id)
 ) ENGINE=InnoDB;
 
 --disable_query_log

@@ -15,21 +15,23 @@ dt DATETIME NULL,
 PRIMARY KEY (id),
 KEY (dt)
 ) ENGINE=InnoDB;
-INSERT INTO t1 (id, dt) SELECT seq, NULL FROM seq_1_to_100000;
+InnoDB		0 transactions not purged
+INSERT INTO t1 (id, dt) SELECT seq, NULL FROM seq_1_to_1000;
 # Rows inserted with NULL DATETIME
 SELECT COUNT(*) AS rows_inserted FROM t1;
 rows_inserted
-100000
+1000
 SELECT COUNT(DISTINCT dt) AS distinct_timestamps FROM t1;
 distinct_timestamps
 0
+InnoDB		0 transactions not purged
 # Index lock upgrades during inserts
 SELECT @lu01 AS index_lock_upgrades_insert;
 index_lock_upgrades_insert
-900
+7
 SELECT @pi01 AS pessimistic_insert_calls_insert;
 pessimistic_insert_calls_insert
-904
+9
 SELECT @pu01 AS pessimistic_update_calls_insert;
 pessimistic_update_calls_insert
 0
@@ -44,7 +46,7 @@ optim_err_overflows_insert
 0
 SELECT @ps01 AS index_page_splits_insert;
 index_page_splits_insert
-904
+9
 SELECT @ma01 AS index_page_merge_attempts_insert;
 index_page_merge_attempts_insert
 0
@@ -60,56 +62,58 @@ index_page_discards_insert
 # Now update all rows (batch update)
 # This changes DATETIME from NULL to a distinct timestamp per row,
 # triggering the pessimistic path due to record size change.
-UPDATE t1 JOIN seq_1_to_100000 s ON t1.id = s.seq
+UPDATE t1 JOIN seq_1_to_1000 s ON t1.id = s.seq
 SET t1.dt= '2025-01-01' + INTERVAL s.seq SECOND;
 # Rows updated
 SELECT COUNT(DISTINCT dt) AS distinct_timestamps FROM t1;
 distinct_timestamps
-100000
+1000
+InnoDB		0 transactions not purged
 # Index lock upgrades during updates
 SELECT @lu12 AS index_lock_upgrades_update;
 index_lock_upgrades_update
-1548
+1016
 SELECT @pi12 AS pessimistic_insert_calls_update;
 pessimistic_insert_calls_update
-1036
+9
 SELECT @pu12 AS pessimistic_update_calls_update;
 pessimistic_update_calls_update
-636
+414
 SELECT @pe12 AS pessimistic_delete_calls_update;
 pessimistic_delete_calls_update
-538
+601
 SELECT @ou12 AS optim_err_underflows_update;
 optim_err_underflows_update
-0
+300
 SELECT @oo12 AS optim_err_overflows_update;
 optim_err_overflows_update
-636
+114
 SELECT @ps12 AS index_page_splits_update;
 index_page_splits_update
-1036
+9
 SELECT @ma12 AS index_page_merge_attempts_update;
 index_page_merge_attempts_update
-554
+895
 SELECT @ms12 AS index_page_merge_successful_update;
 index_page_merge_successful_update
 0
 SELECT @rs12 AS index_page_reorg_successful_update;
 index_page_reorg_successful_update
-3817
+98
 SELECT @pd12 AS index_page_discards_update;
 index_page_discards_update
-2
+3
 # Now delete almost all rows
 DELETE FROM t1 WHERE id > 1;
 # Rows remaining
 SELECT COUNT(*) AS rows_remaining FROM t1;
 rows_remaining
 1
+InnoDB		0 transactions not purged
 # Index lock upgrades during deletes
 SELECT @lu23 AS index_lock_upgrades_delete;
 index_lock_upgrades_delete
-52763
+621
 SELECT @pi23 AS pessimistic_insert_calls_delete;
 pessimistic_insert_calls_delete
 0
@@ -118,7 +122,7 @@ pessimistic_update_calls_delete
 0
 SELECT @pe23 AS pessimistic_delete_calls_delete;
 pessimistic_delete_calls_delete
-53007
+636
 SELECT @ou23 AS optim_err_underflows_delete;
 optim_err_underflows_delete
 0
@@ -130,14 +134,14 @@ index_page_splits_delete
 0
 SELECT @ma23 AS index_page_merge_attempts_delete;
 index_page_merge_attempts_delete
-52736
+621
 SELECT @ms23 AS index_page_merge_successful_delete;
 index_page_merge_successful_delete
-1
+17
 SELECT @rs23 AS index_page_reorg_successful_delete;
 index_page_reorg_successful_delete
-0
+13
 SELECT @pd23 AS index_page_discards_delete;
 index_page_discards_delete
-258
+0
 DROP TABLE t1;

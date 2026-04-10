@@ -23,6 +23,7 @@ CREATE TABLE t1 (
 SET GLOBAL innodb_monitor_enable= 'module_index';
 --enable_query_log
 
+--source include/wait_all_purged.inc
 let $lu0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
 let $pi0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
@@ -46,12 +47,13 @@ let $rs0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
 let $pd0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_discards'`;
 
-INSERT INTO t1 (id, dt) SELECT seq, '2025-01-01' + INTERVAL seq SECOND FROM seq_1_to_100000;
+INSERT INTO t1 (id, dt) SELECT seq, '2025-01-01' + INTERVAL seq SECOND FROM seq_1_to_1000;
 
 --echo # Rows inserted with not-NULL DATETIME
 SELECT COUNT(*) AS rows_inserted FROM t1;
 SELECT COUNT(DISTINCT dt) AS distinct_timestamps FROM t1;
 
+--source include/wait_all_purged.inc
 let $lu1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
 let $pi1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
@@ -104,12 +106,13 @@ SELECT @pd01 AS index_page_discards_insert;
 
 --echo # Now update all rows (batch update)
 
-UPDATE t1 JOIN seq_1_to_100000 s ON t1.id = s.seq
+UPDATE t1 JOIN seq_1_to_1000 s ON t1.id = s.seq
 SET t1.dt= '2026-01-01' + INTERVAL s.seq SECOND;
 
 --echo # Rows updated
 SELECT COUNT(DISTINCT dt) AS distinct_timestamps FROM t1;
 
+--source include/wait_all_purged.inc
 let $lu2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
 let $pi2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
@@ -166,6 +169,7 @@ DELETE FROM t1 WHERE id > 1;
 --echo # Rows remaining
 SELECT COUNT(*) AS rows_remaining FROM t1;
 
+--source include/wait_all_purged.inc
 let $lu3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
 let $pi3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS

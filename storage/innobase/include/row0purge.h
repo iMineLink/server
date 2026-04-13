@@ -34,6 +34,7 @@ Created 3/14/1997 Heikki Tuuri
 #include "row0mysql.h"
 #include "mysqld.h"
 #include <queue>
+#include <set>
 #include <unordered_map>
 
 class MDL_ticket;
@@ -92,6 +93,12 @@ struct purge_node_t
 
   /** Undo recs to purge */
   std::queue<trx_purge_rec_t> undo_recs;
+
+  /** Pages that may benefit from compression after purge deletes.
+  Populated when btr_cur_optimistic_delete(BTR_PURGE_DELETE_FLAG)
+  skips the compress check. Grouped by index for efficient latching.
+  De-duplicated via std::set. */
+  std::unordered_map<dict_index_t*, std::set<page_id_t>> deferred_pages;
 
   /** map of table identifiers to table handles and meta-data locks */
   std::unordered_map<table_id_t, std::pair<dict_table_t*,MDL_ticket*>> tables;

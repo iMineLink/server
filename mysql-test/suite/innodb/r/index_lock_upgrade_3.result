@@ -107,7 +107,7 @@ InnoDB		0 transactions not purged
 # Index lock upgrades during deletes
 SELECT @lu23 AS index_lock_upgrades_delete;
 index_lock_upgrades_delete
-255
+4
 SELECT @pi23 AS pessimistic_insert_calls_delete;
 pessimistic_insert_calls_delete
 0
@@ -116,7 +116,7 @@ pessimistic_update_calls_delete
 0
 SELECT @pe23 AS pessimistic_delete_calls_delete;
 pessimistic_delete_calls_delete
-261
+10
 SELECT @ou23 AS optim_err_underflows_delete;
 optim_err_underflows_delete
 0
@@ -128,14 +128,14 @@ index_page_splits_delete
 0
 SELECT @ma23 AS index_page_merge_attempts_delete;
 index_page_merge_attempts_delete
-255
+3
 SELECT @ms23 AS index_page_merge_successful_delete;
 index_page_merge_successful_delete
-6
+2
 SELECT @rs23 AS index_page_reorg_successful_delete;
 index_page_reorg_successful_delete
-5
+2
 SELECT @pd23 AS index_page_discards_delete;
 index_page_discards_delete
-0
+4
 DROP TABLE t1;

@@ -96,6 +96,19 @@ row_purge_reposition_pcur(
 	return(node->found_clust);
 }
 
+/** Record a page for deferred compression after purge, unless
+it is the root page.
+@param node   purge node
+@param index  index the page belongs to
+@param block  buffer block of the page */
+static inline void row_purge_record_deferred_page(
+	purge_node_t *node, dict_index_t *index,
+	const buf_block_t *block)
+{
+	if (block->page.id().page_no() != index->page)
+		node->deferred_pages[index].insert(block->page.id());
+}
+
 /***********************************************************//**
 Removes a delete marked clustered index record if possible.
 @retval true if the row was not found, or it was successfully removed
@@ -224,7 +237,12 @@ close_and_exit:
 #endif
 	if (mode == BTR_MODIFY_LEAF) {
 		success = DB_FAIL != btr_cur_optimistic_delete(
-			btr_pcur_get_btr_cur(&node->pcur), 0, &mtr);
+			btr_pcur_get_btr_cur(&node->pcur), BTR_PURGE_DELETE_FLAG, &mtr);
+		if (success && btr_cur_compress_recommendation(
+				       btr_pcur_get_btr_cur(&node->pcur), &mtr))
+			row_purge_record_deferred_page(
+				node, index,
+				btr_pcur_get_block(&node->pcur));
 	} else {
 		dberr_t	err;
 		ut_ad(mode == BTR_PURGE_TREE);
@@ -946,11 +964,17 @@ found:
 				}
 			}
 
-			if (btr_cur_optimistic_delete(&pcur.btr_cur, 0, &mtr)
+			if (btr_cur_optimistic_delete(
+				    &pcur.btr_cur,
+				    BTR_PURGE_DELETE_FLAG, &mtr)
 			    == DB_FAIL) {
 				page_max_trx_id = row_purge_check(
 					btr_pcur_get_page(&pcur));
-			}
+			} else if (btr_cur_compress_recommendation(
+					   &pcur.btr_cur, &mtr))
+				row_purge_record_deferred_page(
+					node, index,
+					btr_pcur_get_block(&pcur));
 		}
 	}
 
@@ -1543,6 +1567,122 @@ row_purge_step(
 
 		row_purge(node, purge_rec.undo_rec, thr);
 	}
+
+	for (auto &index_pages : node->deferred_pages) {
+		dict_index_t *index= index_pages.first;
+		const std::set<page_id_t> &pages= index_pages.second;
+		const ulint zip_size= index->table->space->zip_size();
+
+		ut_d(fprintf(stderr,
+			     "Deferred compression for %s"
+			     " index %s (%zu pages)\n",
+			     index->is_clust()
+			     ? "clustered" : "secondary",
+			     static_cast<const char*>(index->name),
+			     pages.size()));
+
+		/* Phase 1: Build search tuples from each
+		page without holding the index latch */
+		mem_heap_t *heap= mem_heap_create(256);
+		std::vector<dtuple_t*> tuples;
+		tuples.reserve(pages.size());
+		const ulint n_fields= index->n_uniq;
+
+		for (const page_id_t page_id : pages) {
+			ut_ad(page_id.page_no() != index->page);
+			mtr_t peek_mtr{nullptr};
+			peek_mtr.start();
+			buf_block_t *block= buf_page_get_gen(
+				page_id, zip_size,
+				RW_S_LATCH, nullptr,
+				BUF_GET_POSSIBLY_FREED,
+				&peek_mtr);
+			if (!block
+			    || btr_page_get_index_id(
+				       block->page.frame)
+			    != index->id
+			    || !page_get_n_recs(
+				       block->page.frame))
+			{
+				peek_mtr.commit();
+				continue;
+			}
+
+			const rec_t *rec=
+				page_rec_get_next_const(
+					page_get_infimum_rec(
+						block->page.frame));
+			dtuple_t *tuple= dtuple_create(
+				heap, n_fields);
+			dict_index_copy_types(
+				tuple, index, n_fields);
+			rec_copy_prefix_to_dtuple(
+				tuple, rec, index,
+				n_fields, n_fields, heap);
+			tuples.push_back(tuple);
+			peek_mtr.commit();
+		}
+
+		if (tuples.empty()) {
+			mem_heap_free(heap);
+			continue;
+		}
+
+		/* Phase 2: X-latch the index, descend for
+		each tuple, and attempt compression.
+		Commit/restart mtr per page to avoid
+		modified-page conflicts during descent. */
+		for (dtuple_t *tuple : tuples) {
+			mtr_t mtr{node->trx};
+			log_free_check();
+			mtr.start();
+			index->set_modified(mtr);
+			mtr_x_lock_index(index, &mtr);
+
+      // TODO Add counter here, to check how many times the index is X-locked
+
+			btr_pcur_t pcur;
+			pcur.btr_cur.page_cur.index= index;
+			if (btr_pcur_open_with_no_init(
+				    tuple, PAGE_CUR_LE,
+				    BTR_MODIFY_TREE_ALREADY_LATCHED,
+				    &pcur, &mtr) == DB_SUCCESS) {
+				buf_block_t *block=
+					btr_pcur_get_block(&pcur);
+
+				ut_d(fprintf(stderr,
+					     "  page %u"
+					     " data_size %u"
+					     " n_recs %u\n",
+					     block->page.id()
+					     .page_no(),
+					     (unsigned)
+					     page_get_data_size(
+						     block->page
+						     .frame),
+					     (unsigned)
+					     page_get_n_recs(
+						     block->page
+						     .frame)));
+
+				if (btr_cur_compress_if_useful(
+					    &pcur.btr_cur,
+					    false, &mtr))
+					ut_d(fprintf(stderr,
+						     "  merged"
+						     " page %u\n",
+						     block->page
+						     .id()
+						     .page_no()));
+				btr_pcur_close(&pcur);
+			}
+
+			mtr.commit();
+		}
+		mem_heap_free(heap);
+	}
+
+	node->deferred_pages.clear();
 
 	thr->run_node = node->end(current_thd);
 	return(thr);

@@ -1,0 +1,282 @@
+--source include/have_innodb.inc
+--source include/have_innodb_4k.inc
+--source include/have_sequence.inc
+
+--disable_query_log
+SET @save_stats_persistent= @@GLOBAL.innodb_stats_persistent;
+SET GLOBAL innodb_stats_persistent= 0;
+SET GLOBAL innodb_monitor_enable= 'module_index';
+--enable_query_log
+
+let $seq_size= 10000;
+
+CREATE TABLE t1 (
+  id INT NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB;
+
+--source include/wait_all_purged.inc
+let $ps0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_splits'`;
+let $ma0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_attempts'`;
+let $ms0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_successful'`;
+let $rs0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_reorg_successful'`;
+let $pd0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_discards'`;
+
+eval INSERT INTO t1 (id) SELECT seq FROM seq_1_to_$seq_size;
+
+--source include/wait_all_purged.inc
+let $ps1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_splits'`;
+let $ma1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_attempts'`;
+let $ms1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_successful'`;
+let $rs1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_reorg_successful'`;
+let $pd1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_discards'`;
+
+--disable_query_log
+eval SELECT $ps1 - $ps0 AS index_page_splits_insert;
+eval SELECT $ma1 - $ma0 AS index_page_merge_attempts_insert;
+eval SELECT $ms1 - $ms0 AS index_page_merge_successful_insert;
+eval SELECT $rs1 - $rs0 AS index_page_reorg_successful_insert;
+eval SELECT $pd1 - $pd0 AS index_page_discards_insert;
+--enable_query_log
+
+DELETE FROM t1 WHERE id > (SELECT MAX(id) FROM t1) / 2;
+
+--source include/wait_all_purged.inc
+let $ps2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_splits'`;
+let $ma2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_attempts'`;
+let $ms2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_successful'`;
+let $rs2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_reorg_successful'`;
+let $pd2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_discards'`;
+
+--disable_query_log
+eval SELECT $ps2 - $ps1 AS index_page_splits_delete_upper_half;
+eval SELECT $ma2 - $ma1 AS index_page_merge_attempts_delete_upper_half;
+eval SELECT $ms2 - $ms1 AS index_page_merge_successful_delete_upper_half;
+eval SELECT $rs2 - $rs1 AS index_page_reorg_successful_delete_upper_half;
+eval SELECT $pd2 - $pd1 AS index_page_discards_delete_upper_half;
+--enable_query_log
+
+DELETE FROM t1 WHERE id % 2 = 0;
+
+--source include/wait_all_purged.inc
+let $ps3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_splits'`;
+let $ma3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_attempts'`;
+let $ms3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_successful'`;
+let $rs3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_reorg_successful'`;
+let $pd3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_discards'`;
+
+--disable_query_log
+eval SELECT $ps3 - $ps2 AS index_page_splits_delete_even;
+eval SELECT $ma3 - $ma2 AS index_page_merge_attempts_delete_even;
+eval SELECT $ms3 - $ms2 AS index_page_merge_successful_delete_even;
+eval SELECT $rs3 - $rs2 AS index_page_reorg_successful_delete_even;
+eval SELECT $pd3 - $pd2 AS index_page_discards_delete_even;
+--enable_query_log
+
+--disable_query_log
+DELIMITER |;
+CREATE PROCEDURE delete_random_t1()
+BEGIN
+  DECLARE done INT DEFAULT FALSE;
+  DECLARE del_id INT;
+  DECLARE cur CURSOR FOR SELECT id FROM t1 ORDER BY RAND(42);
+  DECLARE CONTINUE HANDLER FOR NOT FOUND SET done= TRUE;
+  START TRANSACTION;
+  OPEN cur;
+  read_loop: LOOP
+    FETCH cur INTO del_id;
+    IF done THEN
+      LEAVE read_loop;
+    END IF;
+    DELETE FROM t1 WHERE id = del_id;
+  END LOOP;
+  CLOSE cur;
+  COMMIT;
+END|
+DELIMITER ;|
+CALL delete_random_t1();
+DROP PROCEDURE delete_random_t1;
+--enable_query_log
+
+--source include/wait_all_purged.inc
+let $ps4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_splits'`;
+let $ma4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_attempts'`;
+let $ms4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_successful'`;
+let $rs4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_reorg_successful'`;
+let $pd4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_discards'`;
+
+--disable_query_log
+eval SELECT $ps4 - $ps3 AS index_page_splits_delete_random;
+eval SELECT $ma4 - $ma3 AS index_page_merge_attempts_delete_random;
+eval SELECT $ms4 - $ms3 AS index_page_merge_successful_delete_random;
+eval SELECT $rs4 - $rs3 AS index_page_reorg_successful_delete_random;
+eval SELECT $pd4 - $pd3 AS index_page_discards_delete_random;
+--enable_query_log
+
+DROP TABLE t1;
+
+CREATE TABLE t2 (
+  id INT NOT NULL,
+  val INT NOT NULL,
+  PRIMARY KEY (id),
+  KEY (val)
+) ENGINE=InnoDB;
+
+--source include/wait_all_purged.inc
+let $ps0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_splits'`;
+let $ma0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_attempts'`;
+let $ms0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_successful'`;
+let $rs0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_reorg_successful'`;
+let $pd0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_discards'`;
+
+eval INSERT INTO t2 (id, val) SELECT seq, seq * 2 FROM seq_1_to_$seq_size;
+
+--source include/wait_all_purged.inc
+let $ps1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_splits'`;
+let $ma1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_attempts'`;
+let $ms1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_successful'`;
+let $rs1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_reorg_successful'`;
+let $pd1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_discards'`;
+
+--disable_query_log
+eval SELECT $ps1 - $ps0 AS index_page_splits_insert;
+eval SELECT $ma1 - $ma0 AS index_page_merge_attempts_insert;
+eval SELECT $ms1 - $ms0 AS index_page_merge_successful_insert;
+eval SELECT $rs1 - $rs0 AS index_page_reorg_successful_insert;
+eval SELECT $pd1 - $pd0 AS index_page_discards_insert;
+--enable_query_log
+
+DELETE FROM t2 WHERE id > (SELECT MAX(id) FROM t2) / 2;
+
+--source include/wait_all_purged.inc
+let $ps2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_splits'`;
+let $ma2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_attempts'`;
+let $ms2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_successful'`;
+let $rs2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_reorg_successful'`;
+let $pd2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_discards'`;
+
+--disable_query_log
+eval SELECT $ps2 - $ps1 AS index_page_splits_delete_upper_half;
+eval SELECT $ma2 - $ma1 AS index_page_merge_attempts_delete_upper_half;
+eval SELECT $ms2 - $ms1 AS index_page_merge_successful_delete_upper_half;
+eval SELECT $rs2 - $rs1 AS index_page_reorg_successful_delete_upper_half;
+eval SELECT $pd2 - $pd1 AS index_page_discards_delete_upper_half;
+--enable_query_log
+
+DELETE FROM t2 WHERE id % 2 = 0;
+
+--source include/wait_all_purged.inc
+let $ps3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_splits'`;
+let $ma3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_attempts'`;
+let $ms3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_successful'`;
+let $rs3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_reorg_successful'`;
+let $pd3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_discards'`;
+
+--disable_query_log
+eval SELECT $ps3 - $ps2 AS index_page_splits_delete_even;
+eval SELECT $ma3 - $ma2 AS index_page_merge_attempts_delete_even;
+eval SELECT $ms3 - $ms2 AS index_page_merge_successful_delete_even;
+eval SELECT $rs3 - $rs2 AS index_page_reorg_successful_delete_even;
+eval SELECT $pd3 - $pd2 AS index_page_discards_delete_even;
+--enable_query_log
+
+--disable_query_log
+DELIMITER |;
+CREATE PROCEDURE delete_random_t2()
+BEGIN
+  DECLARE done INT DEFAULT FALSE;
+  DECLARE del_id INT;
+  DECLARE cur CURSOR FOR SELECT id FROM t2 ORDER BY RAND(42);
+  DECLARE CONTINUE HANDLER FOR NOT FOUND SET done= TRUE;
+  START TRANSACTION;
+  OPEN cur;
+  read_loop: LOOP
+    FETCH cur INTO del_id;
+    IF done THEN
+      LEAVE read_loop;
+    END IF;
+    DELETE FROM t2 WHERE id = del_id;
+  END LOOP;
+  CLOSE cur;
+  COMMIT;
+END|
+DELIMITER ;|
+CALL delete_random_t2();
+DROP PROCEDURE delete_random_t2;
+--enable_query_log
+
+--source include/wait_all_purged.inc
+let $ps4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_splits'`;
+let $ma4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_attempts'`;
+let $ms4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_merge_successful'`;
+let $rs4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_reorg_successful'`;
+let $pd4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
+               WHERE NAME = 'index_page_discards'`;
+
+--disable_query_log
+eval SELECT $ps4 - $ps3 AS index_page_splits_delete_random;
+eval SELECT $ma4 - $ma3 AS index_page_merge_attempts_delete_random;
+eval SELECT $ms4 - $ms3 AS index_page_merge_successful_delete_random;
+eval SELECT $rs4 - $rs3 AS index_page_reorg_successful_delete_random;
+eval SELECT $pd4 - $pd3 AS index_page_discards_delete_random;
+--enable_query_log
+
+DROP TABLE t2;
+
+--disable_query_log
+SET GLOBAL innodb_stats_persistent= @save_stats_persistent;
+SET GLOBAL innodb_monitor_disable= 'module_index';
+--disable_warnings
+SET GLOBAL innodb_monitor_disable= default;
+SET GLOBAL innodb_monitor_enable= default;
+--enable_warnings
+--enable_query_log

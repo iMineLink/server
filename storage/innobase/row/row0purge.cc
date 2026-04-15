@@ -1570,12 +1570,24 @@ root with X-latch to attempt merging underfull pages.
 @param node  purge node with deferred_pages to process */
 static inline void row_purge_deferred_compress(purge_node_t *node)
 {
+	ut_d(if (!node->deferred_pages.empty())
+		fprintf(stderr,
+			"DEFERRED_COMPRESS: %zu pages\n",
+			node->deferred_pages.size()));
+
 	for (const auto &entry : node->deferred_pages) {
 		dict_index_t *index= entry.first;
 		const page_id_t page_id= entry.second;
 		const ulint zip_size= index->table->space->zip_size();
 
 		ut_ad(page_id.page_no() != index->page);
+
+		ut_d(fprintf(stderr,
+			     "DEFERRED_COMPRESS: %s index %s page %u:%u\n",
+			     index->is_clust()
+			     ? "clustered" : "secondary",
+			     static_cast<const char*>(index->name),
+			     page_id.space(), page_id.page_no()));
 
 		/* Peek at the page in a separate mtr to build
 		a search tuple from the first user record */
@@ -1589,17 +1601,42 @@ static inline void row_purge_deferred_compress(purge_node_t *node)
 				RW_S_LATCH, nullptr,
 				BUF_GET_POSSIBLY_FREED,
 				&peek_mtr);
-			if (!block
-			    || btr_page_get_index_id(
-				       block->page.frame)
-			    != index->id
-			    || !page_get_n_recs(
-				       block->page.frame))
-			{
+			if (!block) {
+				ut_d(fprintf(stderr,
+					     "DEFERRED_COMPRESS:   skip: page not"
+					     " in buffer pool\n"));
 				peek_mtr.commit();
 				mem_heap_free(heap);
 				continue;
 			}
+			if (btr_page_get_index_id(
+				    block->page.frame)
+			    != index->id) {
+				ut_d(fprintf(stderr,
+					     "DEFERRED_COMPRESS:   skip: index id"
+					     " mismatch\n"));
+				peek_mtr.commit();
+				mem_heap_free(heap);
+				continue;
+			}
+			if (!page_get_n_recs(
+				    block->page.frame)) {
+				ut_d(fprintf(stderr,
+					     "DEFERRED_COMPRESS:   skip: no user"
+					     " records\n"));
+				peek_mtr.commit();
+				mem_heap_free(heap);
+				continue;
+			}
+
+			ut_d(fprintf(stderr,
+				     "DEFERRED_COMPRESS:   peek: data_size %u"
+				     " n_recs %u\n",
+				     (unsigned)
+				     page_get_data_size(
+					     block->page.frame),
+				     (unsigned) page_get_n_recs(
+					     block->page.frame)));
 
 			const ulint n_fields= index->n_uniq;
 			const rec_t *rec=
@@ -1626,15 +1663,20 @@ static inline void row_purge_deferred_compress(purge_node_t *node)
 
 		btr_pcur_t pcur;
 		pcur.btr_cur.page_cur.index= index;
-		if (btr_pcur_open_with_no_init(
-			    tuple, PAGE_CUR_LE,
-			    BTR_MODIFY_TREE_ALREADY_LATCHED,
-			    &pcur, &mtr) == DB_SUCCESS) {
+		dberr_t err= btr_pcur_open_with_no_init(
+			tuple, PAGE_CUR_LE,
+			BTR_MODIFY_TREE_ALREADY_LATCHED,
+			&pcur, &mtr);
+		if (err != DB_SUCCESS) {
+			ut_d(fprintf(stderr,
+				     "DEFERRED_COMPRESS:   descent failed:"
+				     " err %d\n", (int) err));
+		} else {
 			buf_block_t *block=
 				btr_pcur_get_block(&pcur);
 
 			ut_d(fprintf(stderr,
-				     "  page %u"
+				     "DEFERRED_COMPRESS:   landed page %u"
 				     " data_size %u"
 				     " n_recs %u\n",
 				     block->page.id()
@@ -1652,7 +1694,14 @@ static inline void row_purge_deferred_compress(purge_node_t *node)
 				    &pcur.btr_cur,
 				    false, &mtr))
 				ut_d(fprintf(stderr,
-					     "  merged"
+					     "DEFERRED_COMPRESS:   merged"
+					     " page %u\n",
+					     block->page
+					     .id()
+					     .page_no()));
+			else
+				ut_d(fprintf(stderr,
+					     "DEFERRED_COMPRESS:   not merged"
 					     " page %u\n",
 					     block->page
 					     .id()

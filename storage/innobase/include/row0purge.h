@@ -96,9 +96,8 @@ struct purge_node_t
 
   /** Pages that may benefit from compression after purge deletes.
   Populated when btr_cur_optimistic_delete(BTR_PURGE_DELETE_FLAG)
-  skips the compress check. Grouped by index for efficient latching.
-  De-duplicated via std::set. */
-  std::unordered_map<dict_index_t*, std::set<page_id_t>> deferred_pages;
+  skips the compress check. De-duplicated via std::set. */
+  std::set<std::pair<dict_index_t*, page_id_t>> deferred_pages;
 
   /** map of table identifiers to table handles and meta-data locks */
   std::unordered_map<table_id_t, std::pair<dict_table_t*,MDL_ticket*>> tables;

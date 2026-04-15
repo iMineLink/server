@@ -109,6 +109,24 @@ static inline void row_purge_record_deferred_page(
 		node->deferred_pages[index].insert(block->page.id());
 }
 
+/** Remove a page from deferred compression after a pessimistic
+delete already handled the merge.
+@param node   purge node
+@param index  index the page belongs to
+@param block  buffer block of the page */
+static inline void row_purge_remove_deferred_page(
+	purge_node_t *node, dict_index_t *index,
+	const buf_block_t *block)
+{
+	const auto it= node->deferred_pages.find(index);
+	if (it != node->deferred_pages.end())
+	{
+		it->second.erase(block->page.id());
+		if (it->second.empty())
+			node->deferred_pages.erase(it);
+	}
+}
+
 /***********************************************************//**
 Removes a delete marked clustered index record if possible.
 @retval true if the row was not found, or it was successfully removed
@@ -250,6 +268,9 @@ close_and_exit:
 			&err, FALSE, btr_pcur_get_btr_cur(&node->pcur), 0,
 			false, &mtr);
 		success = err == DB_SUCCESS;
+    if (success)
+      row_purge_remove_deferred_page(
+        node, index, btr_pcur_get_block(&node->pcur));
 	}
 
 func_exit:
@@ -860,6 +881,8 @@ static bool row_purge_remove_sec_if_poss_tree(purge_node_t *node,
 					   0, false, &mtr);
 		switch (UNIV_EXPECT(err, DB_SUCCESS)) {
 		case DB_SUCCESS:
+      row_purge_remove_deferred_page(
+        node, index, btr_pcur_get_block(&pcur));
 			break;
 		case DB_OUT_OF_FILE_SPACE:
 			success = FALSE;
@@ -1546,28 +1569,12 @@ inline que_node_t *purge_node_t::end(THD *thd)
 }
 
 
-/***********************************************************//**
-Does the purge operation.
-@return query thread to run next */
-que_thr_t*
-row_purge_step(
-/*===========*/
-	que_thr_t*	thr)	/*!< in: query thread */
+/** Process deferred page compressions collected during the purge batch.
+For each index, peek at recorded pages to build search tuples, then
+descend from root with X-latch to attempt merging underfull pages.
+@param node  purge node with deferred_pages to process */
+static inline void row_purge_deferred_compress(purge_node_t *node)
 {
-	purge_node_t*	node;
-
-	node = static_cast<purge_node_t*>(thr->run_node);
-
-	node->start();
-
-	while (!node->undo_recs.empty()) {
-		trx_purge_rec_t purge_rec = node->undo_recs.front();
-		node->undo_recs.pop();
-		node->roll_ptr = purge_rec.roll_ptr;
-
-		row_purge(node, purge_rec.undo_rec, thr);
-	}
-
 	for (auto &index_pages : node->deferred_pages) {
 		dict_index_t *index= index_pages.first;
 		const std::set<page_id_t> &pages= index_pages.second;
@@ -1639,8 +1646,6 @@ row_purge_step(
 			index->set_modified(mtr);
 			mtr_x_lock_index(index, &mtr);
 
-      // TODO Add counter here, to check how many times the index is X-locked
-
 			btr_pcur_t pcur;
 			pcur.btr_cur.page_cur.index= index;
 			if (btr_pcur_open_with_no_init(
@@ -1683,6 +1688,31 @@ row_purge_step(
 	}
 
 	node->deferred_pages.clear();
+}
+
+/***********************************************************//**
+Does the purge operation.
+@return query thread to run next */
+que_thr_t*
+row_purge_step(
+/*===========*/
+	que_thr_t*	thr)	/*!< in: query thread */
+{
+	purge_node_t*	node;
+
+	node = static_cast<purge_node_t*>(thr->run_node);
+
+	node->start();
+
+	while (!node->undo_recs.empty()) {
+		trx_purge_rec_t purge_rec = node->undo_recs.front();
+		node->undo_recs.pop();
+		node->roll_ptr = purge_rec.roll_ptr;
+
+		row_purge(node, purge_rec.undo_rec, thr);
+	}
+
+	row_purge_deferred_compress(node);
 
 	thr->run_node = node->end(current_thd);
 	return(thr);

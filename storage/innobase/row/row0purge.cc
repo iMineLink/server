@@ -106,8 +106,7 @@ static inline void row_purge_record_deferred_page(
 	const buf_block_t *block)
 {
 	if (block->page.id().page_no() != index->page)
-		node->deferred_pages.emplace(index,
-					     block->page.id());
+		node->deferred_pages.emplace(index, block->page.id());
 }
 
 /** Remove a page from deferred compression after a pessimistic
@@ -119,7 +118,8 @@ static inline void row_purge_remove_deferred_page(
 	purge_node_t *node, dict_index_t *index,
 	const buf_block_t *block)
 {
-	node->deferred_pages.erase({index, block->page.id()});
+	if (block->page.id().page_no() != index->page)
+		node->deferred_pages.erase({index, block->page.id()});
 }
 
 /***********************************************************//**

@@ -13,6 +13,7 @@ let $pu_prev= $pu_curr;
 let $pe_prev= $pe_curr;
 let $ou_prev= $ou_curr;
 let $oo_prev= $oo_curr;
+let $ix_prev= $ix_curr;
 
 let $ps_curr= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_splits'`;
@@ -36,3 +37,5 @@ let $ou_curr= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
 let $oo_curr= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
                WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_overflows'`;
+let $ix_curr= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_mtr_n_index_x_lock_calls'`;

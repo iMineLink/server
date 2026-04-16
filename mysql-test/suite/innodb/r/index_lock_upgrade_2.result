@@ -33,6 +33,8 @@ optim_err_underflows_insert
 0
 optim_err_overflows_insert
 0
+index_x_lock_calls_insert
+0
 index_page_splits_insert
 8
 index_page_merge_attempts_insert
@@ -61,6 +63,8 @@ pessimistic_delete_calls_update
 optim_err_underflows_update
 66
 optim_err_overflows_update
+0
+index_x_lock_calls_update
 0
 index_page_splits_update
 0
@@ -91,6 +95,8 @@ optim_err_underflows_delete
 0
 optim_err_overflows_delete
 0
+index_x_lock_calls_delete
+4
 index_page_splits_delete
 0
 index_page_merge_attempts_delete

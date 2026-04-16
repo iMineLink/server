@@ -9,6 +9,7 @@ eval SELECT $pu_curr - $pu_prev AS pessimistic_update_calls_$delta_suffix;
 eval SELECT $pe_curr - $pe_prev AS pessimistic_delete_calls_$delta_suffix;
 eval SELECT $ou_curr - $ou_prev AS optim_err_underflows_$delta_suffix;
 eval SELECT $oo_curr - $oo_prev AS optim_err_overflows_$delta_suffix;
+eval SELECT $ix_curr - $ix_prev AS index_x_lock_calls_$delta_suffix;
 eval SELECT $ps_curr - $ps_prev AS index_page_splits_$delta_suffix;
 eval SELECT $ma_curr - $ma_prev AS index_page_merge_attempts_$delta_suffix;
 eval SELECT $ms_curr - $ms_prev AS index_page_merge_successful_$delta_suffix;

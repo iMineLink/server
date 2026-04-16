@@ -1084,6 +1084,12 @@ static SHOW_VAR innodb_status_variables[]= {
    &btr_cur_pessimistic_update_optim_err_underflows, SHOW_SIZE_T},
   {"btr_cur_pessimistic_update_optim_err_overflows",
    &btr_cur_pessimistic_update_optim_err_overflows, SHOW_SIZE_T},
+  {"mtr_n_index_s_lock_calls",
+   &mtr_n_index_s_lock_calls, SHOW_SIZE_T},
+  {"mtr_n_index_x_lock_calls",
+   &mtr_n_index_x_lock_calls, SHOW_SIZE_T},
+  {"mtr_n_index_sx_lock_calls",
+   &mtr_n_index_sx_lock_calls, SHOW_SIZE_T},
 #endif /* UNIV_DEBUG */
 
   {NullS, NullS, SHOW_LONG}

@@ -26,6 +26,18 @@ let $rs0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_reorg_successful'`;
 let $pd0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_discards'`;
+let $lu0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
+let $pu0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
+let $ou0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
+let $oo0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_overflows'`;
 
 eval INSERT INTO t1 (id) SELECT seq FROM seq_1_to_$seq_size;
 
@@ -40,6 +52,18 @@ let $rs1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_reorg_successful'`;
 let $pd1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_discards'`;
+let $lu1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
+let $pu1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
+let $ou1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
+let $oo1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_overflows'`;
 
 --disable_query_log
 eval SELECT $ps1 - $ps0 AS index_page_splits_insert;
@@ -47,6 +71,12 @@ eval SELECT $ma1 - $ma0 AS index_page_merge_attempts_insert;
 eval SELECT $ms1 - $ms0 AS index_page_merge_successful_insert;
 eval SELECT $rs1 - $rs0 AS index_page_reorg_successful_insert;
 eval SELECT $pd1 - $pd0 AS index_page_discards_insert;
+eval SELECT $lu1 - $lu0 AS index_lock_upgrades_insert;
+eval SELECT $pi1 - $pi0 AS pessimistic_insert_calls_insert;
+eval SELECT $pu1 - $pu0 AS pessimistic_update_calls_insert;
+eval SELECT $pe1 - $pe0 AS pessimistic_delete_calls_insert;
+eval SELECT $ou1 - $ou0 AS optim_err_underflows_insert;
+eval SELECT $oo1 - $oo0 AS optim_err_overflows_insert;
 --enable_query_log
 
 DELETE FROM t1 WHERE id > (SELECT MAX(id) FROM t1) / 2;
@@ -62,6 +92,18 @@ let $rs2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_reorg_successful'`;
 let $pd2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_discards'`;
+let $lu2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
+let $pu2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
+let $ou2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
+let $oo2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_overflows'`;
 
 --disable_query_log
 eval SELECT $ps2 - $ps1 AS index_page_splits_delete_upper_half;
@@ -69,6 +111,12 @@ eval SELECT $ma2 - $ma1 AS index_page_merge_attempts_delete_upper_half;
 eval SELECT $ms2 - $ms1 AS index_page_merge_successful_delete_upper_half;
 eval SELECT $rs2 - $rs1 AS index_page_reorg_successful_delete_upper_half;
 eval SELECT $pd2 - $pd1 AS index_page_discards_delete_upper_half;
+eval SELECT $lu2 - $lu1 AS index_lock_upgrades_delete_upper_half;
+eval SELECT $pi2 - $pi1 AS pessimistic_insert_calls_delete_upper_half;
+eval SELECT $pu2 - $pu1 AS pessimistic_update_calls_delete_upper_half;
+eval SELECT $pe2 - $pe1 AS pessimistic_delete_calls_delete_upper_half;
+eval SELECT $ou2 - $ou1 AS optim_err_underflows_delete_upper_half;
+eval SELECT $oo2 - $oo1 AS optim_err_overflows_delete_upper_half;
 --enable_query_log
 
 DELETE FROM t1 WHERE id % 2 = 0;
@@ -84,6 +132,18 @@ let $rs3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_reorg_successful'`;
 let $pd3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_discards'`;
+let $lu3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
+let $pu3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
+let $ou3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
+let $oo3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_overflows'`;
 
 --disable_query_log
 eval SELECT $ps3 - $ps2 AS index_page_splits_delete_even;
@@ -91,6 +151,12 @@ eval SELECT $ma3 - $ma2 AS index_page_merge_attempts_delete_even;
 eval SELECT $ms3 - $ms2 AS index_page_merge_successful_delete_even;
 eval SELECT $rs3 - $rs2 AS index_page_reorg_successful_delete_even;
 eval SELECT $pd3 - $pd2 AS index_page_discards_delete_even;
+eval SELECT $lu3 - $lu2 AS index_lock_upgrades_delete_even;
+eval SELECT $pi3 - $pi2 AS pessimistic_insert_calls_delete_even;
+eval SELECT $pu3 - $pu2 AS pessimistic_update_calls_delete_even;
+eval SELECT $pe3 - $pe2 AS pessimistic_delete_calls_delete_even;
+eval SELECT $ou3 - $ou2 AS optim_err_underflows_delete_even;
+eval SELECT $oo3 - $oo2 AS optim_err_overflows_delete_even;
 --enable_query_log
 
 --disable_query_log
@@ -129,6 +195,18 @@ let $rs4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_reorg_successful'`;
 let $pd4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_discards'`;
+let $lu4= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi4= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
+let $pu4= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe4= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
+let $ou4= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
+let $oo4= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_overflows'`;
 
 --disable_query_log
 eval SELECT $ps4 - $ps3 AS index_page_splits_delete_random;
@@ -136,6 +214,12 @@ eval SELECT $ma4 - $ma3 AS index_page_merge_attempts_delete_random;
 eval SELECT $ms4 - $ms3 AS index_page_merge_successful_delete_random;
 eval SELECT $rs4 - $rs3 AS index_page_reorg_successful_delete_random;
 eval SELECT $pd4 - $pd3 AS index_page_discards_delete_random;
+eval SELECT $lu4 - $lu3 AS index_lock_upgrades_delete_random;
+eval SELECT $pi4 - $pi3 AS pessimistic_insert_calls_delete_random;
+eval SELECT $pu4 - $pu3 AS pessimistic_update_calls_delete_random;
+eval SELECT $pe4 - $pe3 AS pessimistic_delete_calls_delete_random;
+eval SELECT $ou4 - $ou3 AS optim_err_underflows_delete_random;
+eval SELECT $oo4 - $oo3 AS optim_err_overflows_delete_random;
 --enable_query_log
 
 DROP TABLE t1;
@@ -158,6 +242,18 @@ let $rs0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_reorg_successful'`;
 let $pd0= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_discards'`;
+let $lu0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
+let $pu0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
+let $ou0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
+let $oo0= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_overflows'`;
 
 eval INSERT INTO t2 (id, val) SELECT seq, seq * 2 FROM seq_1_to_$seq_size;
 
@@ -172,6 +268,18 @@ let $rs1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_reorg_successful'`;
 let $pd1= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_discards'`;
+let $lu1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
+let $pu1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
+let $ou1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
+let $oo1= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_overflows'`;
 
 --disable_query_log
 eval SELECT $ps1 - $ps0 AS index_page_splits_insert;
@@ -179,6 +287,12 @@ eval SELECT $ma1 - $ma0 AS index_page_merge_attempts_insert;
 eval SELECT $ms1 - $ms0 AS index_page_merge_successful_insert;
 eval SELECT $rs1 - $rs0 AS index_page_reorg_successful_insert;
 eval SELECT $pd1 - $pd0 AS index_page_discards_insert;
+eval SELECT $lu1 - $lu0 AS index_lock_upgrades_insert;
+eval SELECT $pi1 - $pi0 AS pessimistic_insert_calls_insert;
+eval SELECT $pu1 - $pu0 AS pessimistic_update_calls_insert;
+eval SELECT $pe1 - $pe0 AS pessimistic_delete_calls_insert;
+eval SELECT $ou1 - $ou0 AS optim_err_underflows_insert;
+eval SELECT $oo1 - $oo0 AS optim_err_overflows_insert;
 --enable_query_log
 
 DELETE FROM t2 WHERE id > (SELECT MAX(id) FROM t2) / 2;
@@ -194,6 +308,18 @@ let $rs2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_reorg_successful'`;
 let $pd2= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_discards'`;
+let $lu2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
+let $pu2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
+let $ou2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
+let $oo2= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_overflows'`;
 
 --disable_query_log
 eval SELECT $ps2 - $ps1 AS index_page_splits_delete_upper_half;
@@ -201,6 +327,12 @@ eval SELECT $ma2 - $ma1 AS index_page_merge_attempts_delete_upper_half;
 eval SELECT $ms2 - $ms1 AS index_page_merge_successful_delete_upper_half;
 eval SELECT $rs2 - $rs1 AS index_page_reorg_successful_delete_upper_half;
 eval SELECT $pd2 - $pd1 AS index_page_discards_delete_upper_half;
+eval SELECT $lu2 - $lu1 AS index_lock_upgrades_delete_upper_half;
+eval SELECT $pi2 - $pi1 AS pessimistic_insert_calls_delete_upper_half;
+eval SELECT $pu2 - $pu1 AS pessimistic_update_calls_delete_upper_half;
+eval SELECT $pe2 - $pe1 AS pessimistic_delete_calls_delete_upper_half;
+eval SELECT $ou2 - $ou1 AS optim_err_underflows_delete_upper_half;
+eval SELECT $oo2 - $oo1 AS optim_err_overflows_delete_upper_half;
 --enable_query_log
 
 DELETE FROM t2 WHERE id % 2 = 0;
@@ -216,6 +348,18 @@ let $rs3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_reorg_successful'`;
 let $pd3= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_discards'`;
+let $lu3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
+let $pu3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
+let $ou3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
+let $oo3= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_overflows'`;
 
 --disable_query_log
 eval SELECT $ps3 - $ps2 AS index_page_splits_delete_even;
@@ -223,6 +367,12 @@ eval SELECT $ma3 - $ma2 AS index_page_merge_attempts_delete_even;
 eval SELECT $ms3 - $ms2 AS index_page_merge_successful_delete_even;
 eval SELECT $rs3 - $rs2 AS index_page_reorg_successful_delete_even;
 eval SELECT $pd3 - $pd2 AS index_page_discards_delete_even;
+eval SELECT $lu3 - $lu2 AS index_lock_upgrades_delete_even;
+eval SELECT $pi3 - $pi2 AS pessimistic_insert_calls_delete_even;
+eval SELECT $pu3 - $pu2 AS pessimistic_update_calls_delete_even;
+eval SELECT $pe3 - $pe2 AS pessimistic_delete_calls_delete_even;
+eval SELECT $ou3 - $ou2 AS optim_err_underflows_delete_even;
+eval SELECT $oo3 - $oo2 AS optim_err_overflows_delete_even;
 --enable_query_log
 
 --disable_query_log
@@ -261,6 +411,18 @@ let $rs4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_reorg_successful'`;
 let $pd4= `SELECT COUNT_RESET FROM INFORMATION_SCHEMA.INNODB_METRICS
                WHERE NAME = 'index_page_discards'`;
+let $lu4= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_n_index_lock_upgrades'`;
+let $pi4= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_insert_calls'`;
+let $pu4= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_calls'`;
+let $pe4= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_delete_calls'`;
+let $ou4= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_underflows'`;
+let $oo4= `SELECT VARIABLE_VALUE FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+               WHERE VARIABLE_NAME = 'Innodb_btr_cur_pessimistic_update_optim_err_overflows'`;
 
 --disable_query_log
 eval SELECT $ps4 - $ps3 AS index_page_splits_delete_random;
@@ -268,6 +430,12 @@ eval SELECT $ma4 - $ma3 AS index_page_merge_attempts_delete_random;
 eval SELECT $ms4 - $ms3 AS index_page_merge_successful_delete_random;
 eval SELECT $rs4 - $rs3 AS index_page_reorg_successful_delete_random;
 eval SELECT $pd4 - $pd3 AS index_page_discards_delete_random;
+eval SELECT $lu4 - $lu3 AS index_lock_upgrades_delete_random;
+eval SELECT $pi4 - $pi3 AS pessimistic_insert_calls_delete_random;
+eval SELECT $pu4 - $pu3 AS pessimistic_update_calls_delete_random;
+eval SELECT $pe4 - $pe3 AS pessimistic_delete_calls_delete_random;
+eval SELECT $ou4 - $ou3 AS optim_err_underflows_delete_random;
+eval SELECT $oo4 - $oo3 AS optim_err_overflows_delete_random;
 --enable_query_log
 
 DROP TABLE t2;

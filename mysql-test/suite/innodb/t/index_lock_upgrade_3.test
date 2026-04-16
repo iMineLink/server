@@ -38,8 +38,7 @@ let $delta_suffix= insert;
 
 --echo # Now update all rows (batch update)
 
-UPDATE t1 JOIN seq_1_to_1000 s ON t1.id = s.seq
-SET t1.dt= '2026-01-01' + INTERVAL s.seq SECOND;
+UPDATE t1 SET dt= '2026-01-01' + INTERVAL id SECOND;
 
 --echo # Rows updated
 SELECT COUNT(DISTINCT dt) AS distinct_timestamps FROM t1;
@@ -50,7 +49,7 @@ let $delta_suffix= update;
 --source suite/innodb/include/innodb_index_stats_delta.inc
 
 --echo # Now delete rows so that some pages will be emptied too
-DELETE FROM t1 WHERE id > 500 OR id % 2 = 0;
+DELETE FROM t1 WHERE id > (SELECT MAX(id) FROM t1) / 2 OR id % 2 = 0;
 
 --echo # Rows remaining
 SELECT COUNT(*) AS rows_remaining FROM t1;

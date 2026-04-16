@@ -51,8 +51,7 @@ index_page_discards_insert
 # Now update all rows (batch update)
 # This changes DATETIME from NULL to a distinct timestamp per row,
 # triggering the pessimistic path due to record size change.
-UPDATE t1 JOIN seq_1_to_1000 s ON t1.id = s.seq
-SET t1.dt= '2025-01-01' + INTERVAL s.seq SECOND;
+UPDATE t1 SET dt= '2025-01-01' + INTERVAL id SECOND;
 # Rows updated
 SELECT COUNT(DISTINCT dt) AS distinct_timestamps FROM t1;
 distinct_timestamps
@@ -83,7 +82,7 @@ index_page_reorg_successful_update
 index_page_discards_update
 0
 # Now delete rows so that some pages will be emptied too
-DELETE FROM t1 WHERE id > 500 OR id % 2 = 0;
+DELETE FROM t1 WHERE id > (SELECT MAX(id) FROM t1) / 2 OR id % 2 = 0;
 # Rows remaining
 SELECT COUNT(*) AS rows_remaining FROM t1;
 rows_remaining

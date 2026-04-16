@@ -77,7 +77,7 @@ index_page_reorg_successful_update
 index_page_discards_update
 0
 # Now delete rows so that some pages will be emptied too
-DELETE FROM t1 WHERE id > 500 OR id % 2 = 0;
+DELETE FROM t1 WHERE id > (SELECT MAX(id) FROM t1) / 2 OR id % 2 = 0;
 # Rows remaining
 SELECT COUNT(*) AS rows_remaining FROM t1;
 rows_remaining

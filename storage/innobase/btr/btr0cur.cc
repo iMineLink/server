@@ -4445,7 +4445,6 @@ btr_cur_optimistic_delete(
 
 	ut_ad(flags == 0 || flags == BTR_CREATE_FLAG
 	      || flags == BTR_PURGE_DELETE_FLAG);
-	flags&= ~BTR_PURGE_DELETE_FLAG;
 	ut_ad(mtr->memo_contains_flagged(btr_cur_get_block(cursor),
 					 MTR_MEMO_PAGE_X_FIX));
 	ut_ad(mtr->is_named_space(cursor->index()->table->space));

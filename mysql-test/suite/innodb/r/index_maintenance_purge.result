@@ -30,13 +30,13 @@ index_page_discards_insert
 DELETE FROM t1 WHERE id > (SELECT MAX(id) FROM t1) / 2;
 InnoDB		0 transactions not purged
 index_lock_upgrades_delete_upper_half
-2401
+31
 pessimistic_insert_calls_delete_upper_half
 0
 pessimistic_update_calls_delete_upper_half
 0
 pessimistic_delete_calls_delete_upper_half
-2432
+62
 optim_err_underflows_delete_upper_half
 0
 optim_err_overflows_delete_upper_half
@@ -44,23 +44,23 @@ optim_err_overflows_delete_upper_half
 index_page_splits_delete_upper_half
 0
 index_page_merge_attempts_delete_upper_half
-2401
-index_page_merge_successful_delete_upper_half
-31
-index_page_reorg_successful_delete_upper_half
-30
-index_page_discards_delete_upper_half
 0
+index_page_merge_successful_delete_upper_half
+0
+index_page_reorg_successful_delete_upper_half
+0
+index_page_discards_delete_upper_half
+31
 DELETE FROM t1 WHERE id % 2 = 0;
 InnoDB		0 transactions not purged
 index_lock_upgrades_delete_even
-237
+0
 pessimistic_insert_calls_delete_even
 0
 pessimistic_update_calls_delete_even
 0
 pessimistic_delete_calls_delete_even
-252
+15
 optim_err_underflows_delete_even
 0
 optim_err_overflows_delete_even
@@ -68,7 +68,7 @@ optim_err_overflows_delete_even
 index_page_splits_delete_even
 0
 index_page_merge_attempts_delete_even
-237
+16
 index_page_merge_successful_delete_even
 15
 index_page_reorg_successful_delete_even
@@ -77,13 +77,13 @@ index_page_discards_delete_even
 0
 InnoDB		0 transactions not purged
 index_lock_upgrades_delete_random
-298
+15
 pessimistic_insert_calls_delete_random
 0
 pessimistic_update_calls_delete_random
 0
 pessimistic_delete_calls_delete_random
-313
+30
 optim_err_underflows_delete_random
 0
 optim_err_overflows_delete_random
@@ -91,13 +91,13 @@ optim_err_overflows_delete_random
 index_page_splits_delete_random
 0
 index_page_merge_attempts_delete_random
-298
-index_page_merge_successful_delete_random
-16
-index_page_reorg_successful_delete_random
-15
-index_page_discards_delete_random
 0
+index_page_merge_successful_delete_random
+0
+index_page_reorg_successful_delete_random
+0
+index_page_discards_delete_random
+15
 DROP TABLE t1;
 CREATE TABLE t2 (
 id INT NOT NULL,
@@ -133,13 +133,13 @@ index_page_discards_insert
 DELETE FROM t2 WHERE id > (SELECT MAX(id) FROM t2) / 2;
 InnoDB		0 transactions not purged
 index_lock_upgrades_delete_upper_half
-1031
+53
 pessimistic_insert_calls_delete_upper_half
 0
 pessimistic_update_calls_delete_upper_half
 0
 pessimistic_delete_calls_delete_upper_half
-1084
+106
 optim_err_underflows_delete_upper_half
 0
 optim_err_overflows_delete_upper_half
@@ -147,23 +147,23 @@ optim_err_overflows_delete_upper_half
 index_page_splits_delete_upper_half
 0
 index_page_merge_attempts_delete_upper_half
-1031
+1
 index_page_merge_successful_delete_upper_half
-53
-index_page_reorg_successful_delete_upper_half
-52
-index_page_discards_delete_upper_half
 0
+index_page_reorg_successful_delete_upper_half
+0
+index_page_discards_delete_upper_half
+53
 DELETE FROM t2 WHERE id % 2 = 0;
 InnoDB		0 transactions not purged
 index_lock_upgrades_delete_even
-496
+0
 pessimistic_insert_calls_delete_even
 0
 pessimistic_update_calls_delete_even
 0
 pessimistic_delete_calls_delete_even
-523
+27
 optim_err_underflows_delete_even
 0
 optim_err_overflows_delete_even
@@ -171,7 +171,7 @@ optim_err_overflows_delete_even
 index_page_splits_delete_even
 0
 index_page_merge_attempts_delete_even
-496
+28
 index_page_merge_successful_delete_even
 27
 index_page_reorg_successful_delete_even
@@ -180,13 +180,13 @@ index_page_discards_delete_even
 0
 InnoDB		0 transactions not purged
 index_lock_upgrades_delete_random
-473
+26
 pessimistic_insert_calls_delete_random
 0
 pessimistic_update_calls_delete_random
 0
 pessimistic_delete_calls_delete_random
-499
+52
 optim_err_underflows_delete_random
 0
 optim_err_overflows_delete_random
@@ -194,11 +194,11 @@ optim_err_overflows_delete_random
 index_page_splits_delete_random
 0
 index_page_merge_attempts_delete_random
-473
-index_page_merge_successful_delete_random
-28
-index_page_reorg_successful_delete_random
-26
-index_page_discards_delete_random
 0
+index_page_merge_successful_delete_random
+0
+index_page_reorg_successful_delete_random
+0
+index_page_discards_delete_random
+26
 DROP TABLE t2;

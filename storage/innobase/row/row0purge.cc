@@ -1591,10 +1591,10 @@ static inline void row_purge_deferred_compress(purge_node_t *node)
 
 		/* Peek at the page in a separate mtr to build
 		a search tuple from the first user record */
-		mem_heap_t *heap= mem_heap_create(256);
+		mem_heap_empty(node->heap);
 		dtuple_t *tuple;
 		{
-			mtr_t peek_mtr{nullptr};
+			mtr_t peek_mtr{node->trx};
 			peek_mtr.start();
 			buf_block_t *block= buf_page_get_gen(
 				page_id, zip_size,
@@ -1606,7 +1606,6 @@ static inline void row_purge_deferred_compress(purge_node_t *node)
 					     "DEFERRED_COMPRESS:   skip: page not"
 					     " in buffer pool\n"));
 				peek_mtr.commit();
-				mem_heap_free(heap);
 				continue;
 			}
 			if (btr_page_get_index_id(
@@ -1616,7 +1615,6 @@ static inline void row_purge_deferred_compress(purge_node_t *node)
 					     "DEFERRED_COMPRESS:   skip: index id"
 					     " mismatch\n"));
 				peek_mtr.commit();
-				mem_heap_free(heap);
 				continue;
 			}
 			if (!page_get_n_recs(
@@ -1624,8 +1622,8 @@ static inline void row_purge_deferred_compress(purge_node_t *node)
 				ut_d(fprintf(stderr,
 					     "DEFERRED_COMPRESS:   skip: no user"
 					     " records\n"));
+				ut_ad(false);
 				peek_mtr.commit();
-				mem_heap_free(heap);
 				continue;
 			}
 
@@ -1638,17 +1636,31 @@ static inline void row_purge_deferred_compress(purge_node_t *node)
 				     (unsigned) page_get_n_recs(
 					     block->page.frame)));
 
+			if (page_has_siblings(block->page.frame)
+			    && page_get_data_size(
+				       block->page.frame)
+			    >= BTR_CUR_PAGE_COMPRESS_LIMIT(
+				       index)) {
+				ut_d(fprintf(stderr,
+					     "DEFERRED_COMPRESS:   skip:"
+					     " compression not"
+					     " recommended\n"));
+				peek_mtr.commit();
+				continue;
+			}
+
 			const ulint n_fields= index->n_uniq;
+			ut_ad(n_fields > 0);
 			const rec_t *rec=
 				page_rec_get_next_const(
 					page_get_infimum_rec(
 						block->page.frame));
-			tuple= dtuple_create(heap, n_fields);
+			tuple= dtuple_create(node->heap, n_fields);
 			dict_index_copy_types(
 				tuple, index, n_fields);
 			rec_copy_prefix_to_dtuple(
 				tuple, rec, index,
-				n_fields, n_fields, heap);
+				n_fields, n_fields, node->heap);
 			peek_mtr.commit();
 		}
 
@@ -1677,10 +1689,16 @@ static inline void row_purge_deferred_compress(purge_node_t *node)
 
 			ut_d(fprintf(stderr,
 				     "DEFERRED_COMPRESS:   landed page %u"
+				     " (%s target %u)"
 				     " data_size %u"
 				     " n_recs %u\n",
 				     block->page.id()
 				     .page_no(),
+				     block->page.id()
+				     == page_id
+				     ? "same as"
+				     : "DIFFERENT from",
+				     page_id.page_no(),
 				     (unsigned)
 				     page_get_data_size(
 					     block->page
@@ -1710,7 +1728,6 @@ static inline void row_purge_deferred_compress(purge_node_t *node)
 		}
 
 		mtr.commit();
-		mem_heap_free(heap);
 	}
 
 	node->deferred_pages.clear();

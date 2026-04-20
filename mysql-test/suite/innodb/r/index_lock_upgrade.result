@@ -47,27 +47,27 @@ index_page_discards_t1_insert
 UPDATE t1 SET dt= '2025-01-01' + INTERVAL id SECOND;
 InnoDB		0 transactions not purged
 index_lock_upgrades_t1_update_null_to_notnull
-29
+3808
 pessimistic_insert_calls_t1_update_null_to_notnull
 15
 pessimistic_update_calls_t1_update_null_to_notnull
-29
+3808
 pessimistic_delete_calls_t1_update_null_to_notnull
 0
 optim_err_underflows_t1_update_null_to_notnull
-0
+2338
 optim_err_overflows_t1_update_null_to_notnull
-29
+1470
 index_x_lock_calls_t1_update_null_to_notnull
 0
 index_page_splits_t1_update_null_to_notnull
 15
 index_page_merge_attempts_t1_update_null_to_notnull
-0
+2338
 index_page_merge_successful_t1_update_null_to_notnull
 0
 index_page_reorg_successful_t1_update_null_to_notnull
-78
+363
 index_page_discards_t1_update_null_to_notnull
 0
 # Update all rows: 2025 to 2026 (inplace update)
@@ -101,27 +101,27 @@ index_page_discards_t1_update_inplace
 UPDATE t1 SET dt= NULL;
 InnoDB		0 transactions not purged
 index_lock_upgrades_t1_update_notnull_to_null
-3002
+3124
 pessimistic_insert_calls_t1_update_notnull_to_null
-267
+0
 pessimistic_update_calls_t1_update_notnull_to_null
-3002
+3124
 pessimistic_delete_calls_t1_update_notnull_to_null
-282
+15
 optim_err_underflows_t1_update_notnull_to_null
-2735
+2468
 optim_err_overflows_t1_update_notnull_to_null
-267
+656
 index_x_lock_calls_t1_update_notnull_to_null
 0
 index_page_splits_t1_update_notnull_to_null
-267
+0
 index_page_merge_attempts_t1_update_notnull_to_null
-2735
+2468
 index_page_merge_successful_t1_update_notnull_to_null
-282
+15
 index_page_reorg_successful_t1_update_notnull_to_null
-282
+15
 index_page_discards_t1_update_notnull_to_null
 0
 # Delete upper half of rows
@@ -263,27 +263,27 @@ index_page_discards_t2_insert
 UPDATE t2 SET dt= '2025-01-01' + INTERVAL id SECOND;
 InnoDB		0 transactions not purged
 index_lock_upgrades_t2_update_null_to_notnull
-45
+3824
 pessimistic_insert_calls_t2_update_null_to_notnull
 25
 pessimistic_update_calls_t2_update_null_to_notnull
-29
+3808
 pessimistic_delete_calls_t2_update_null_to_notnull
 12
 optim_err_underflows_t2_update_null_to_notnull
-0
+2338
 optim_err_overflows_t2_update_null_to_notnull
-29
+1470
 index_x_lock_calls_t2_update_null_to_notnull
 1
 index_page_splits_t2_update_null_to_notnull
 25
 index_page_merge_attempts_t2_update_null_to_notnull
-1
+2339
 index_page_merge_successful_t2_update_null_to_notnull
 0
 index_page_reorg_successful_t2_update_null_to_notnull
-78
+363
 index_page_discards_t2_update_null_to_notnull
 6
 # Update all rows: 2025 to 2026 (inplace update)
@@ -317,27 +317,27 @@ index_page_discards_t2_update_inplace
 UPDATE t2 SET dt= NULL;
 InnoDB		0 transactions not purged
 index_lock_upgrades_t2_update_notnull_to_null
-3020
+3142
 pessimistic_insert_calls_t2_update_notnull_to_null
-274
+7
 pessimistic_update_calls_t2_update_notnull_to_null
-3002
+3124
 pessimistic_delete_calls_t2_update_notnull_to_null
-304
+37
 optim_err_underflows_t2_update_notnull_to_null
-2735
+2468
 optim_err_overflows_t2_update_notnull_to_null
-267
+656
 index_x_lock_calls_t2_update_notnull_to_null
 1
 index_page_splits_t2_update_notnull_to_null
-274
+7
 index_page_merge_attempts_t2_update_notnull_to_null
-2736
+2469
 index_page_merge_successful_t2_update_notnull_to_null
-282
+15
 index_page_reorg_successful_t2_update_notnull_to_null
-284
+17
 index_page_discards_t2_update_notnull_to_null
 11
 # Delete upper half of rows

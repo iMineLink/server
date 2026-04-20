@@ -105,7 +105,8 @@ static inline void row_purge_record_deferred_page(
 	purge_node_t *node, dict_index_t *index,
 	const buf_block_t *block)
 {
-	if (block->page.id().page_no() != index->page)
+	if (index->is_btree()
+	    && block->page.id().page_no() != index->page)
 		node->deferred_pages.emplace(index, block->page.id());
 }
 
@@ -118,7 +119,8 @@ static inline void row_purge_remove_deferred_page(
 	purge_node_t *node, dict_index_t *index,
 	const buf_block_t *block)
 {
-	if (block->page.id().page_no() != index->page)
+	if (index->is_btree()
+	    && block->page.id().page_no() != index->page)
 		node->deferred_pages.erase({index, block->page.id()});
 }
 
@@ -249,6 +251,7 @@ close_and_exit:
                   );
 #endif
 	if (mode == BTR_MODIFY_LEAF) {
+		/* The clustered index is always a B-tree. */
 		success = DB_FAIL != btr_cur_optimistic_delete(
 			btr_pcur_get_btr_cur(&node->pcur), BTR_PURGE_DELETE_FLAG, &mtr);
 		if (success && btr_cur_compress_recommendation(
@@ -984,7 +987,9 @@ found:
 
 			if (btr_cur_optimistic_delete(
 				    &pcur.btr_cur,
-				    BTR_PURGE_DELETE_FLAG, &mtr)
+				    index->is_btree()
+				    ? BTR_PURGE_DELETE_FLAG : 0,
+				    &mtr)
 			    == DB_FAIL) {
 				page_max_trx_id = row_purge_check(
 					btr_pcur_get_page(&pcur));

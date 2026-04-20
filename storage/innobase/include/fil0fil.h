@@ -129,22 +129,6 @@ private:
     return r_end;
   }
 public:
-  /** Merge the current range with previous range.
-  @param[in] range      range to be merged
-  @param[in] prev_range range to be merged with next */
-  void merge_range(range_set_t::iterator range,
-		   range_set_t::iterator prev_range)
-  {
-    if (range->first != prev_range->last + 1)
-      return;
-
-    /* Merge the current range with previous range */
-    range_t new_range {prev_range->first, range->last};
-    ranges.erase(prev_range);
-    ranges.erase(range);
-    ranges.emplace(new_range);
-  }
-
   /** Split the range and add two more ranges
   @param[in] range	range to be split
   @param[in] value	Value to be removed from range */
@@ -201,24 +185,6 @@ public:
       /* Iterate the previous ranges to delete */
       return remove_within_range(std::prev(range), value);
     return remove_within_range(range, value);
-  }
-  /** Add the value within the existing range
-  @param[in]	range	range to be modified
-  @param[in]	value	value to be added */
-  range_set_t::iterator add_within_range(range_set_t::iterator range,
-                                         uint32_t value)
-  {
-    if (range->first <= value && range->last >= value)
-      return range;
-
-    range_t new_range{range->first, range->last};
-    if (range->last + 1 == value)
-      new_range.last++;
-    else if (range->first - 1 == value)
-      new_range.first--;
-    else return ranges.end();
-    ranges.erase(range);
-    return ranges.emplace(new_range).first;
   }
   /** Add the range in the ranges set. Any existing ranges that overlap or
   are adjacent to new_range are absorbed into it, so that after this call

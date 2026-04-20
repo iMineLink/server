@@ -231,27 +231,94 @@ new_range:
     if (r_offset == r_end)
     {
       /* last range */
-      if (add_within_range(std::prev(r_offset), new_range.first) == r_end)
-        goto new_range;
+      auto prev= std::prev(r_offset);
+      if (prev->first <= new_range.first && prev->last >= new_range.first)
+      {
+        /* Overlap: extend the existing range if new_range.last is beyond it */
+        if (new_range.last > prev->last)
+        {
+          range_t extended{prev->first, new_range.last};
+          ranges.erase(prev);
+          ranges.emplace(extended);
+        }
+        return;
+      }
+      if (prev->last + 1 == new_range.first)
+      {
+        /* Merge with previous range */
+        range_t merged{prev->first, new_range.last};
+        ranges.erase(prev);
+        ranges.emplace(merged);
+        return;
+      }
+      goto new_range;
     }
     else if (r_offset == r_begin)
     {
       /* First range */
-      if (add_within_range(r_offset, new_range.first) == r_end)
-        goto new_range;
-    }
-    else if (r_offset->first - 1 == new_range.first)
-    {
-      /* Change starting of the existing range */
-      auto r_value= add_within_range(r_offset, new_range.first);
-      if (r_value != ranges.begin())
-        merge_range(r_value, std::prev(r_value));
+      if (r_offset->first <= new_range.first && r_offset->last >= new_range.first)
+      {
+        /* Overlap: extend the existing range if new_range.last is beyond it */
+        if (new_range.last > r_offset->last)
+        {
+          range_t extended{r_offset->first, new_range.last};
+          ranges.erase(r_offset);
+          ranges.emplace(extended);
+        }
+        return;
+      }
+      if (new_range.last + 1 == r_offset->first)
+      {
+        /* Merge with next range */
+        range_t merged{new_range.first, r_offset->last};
+        ranges.erase(r_offset);
+        ranges.emplace(merged);
+        return;
+      }
+      goto new_range;
     }
     else
     {
-      /* previous range last_value alone */
-      if (add_within_range(std::prev(r_offset), new_range.first) == r_end)
-        goto new_range;
+      /* Check for overlap with previous range */
+      auto prev= std::prev(r_offset);
+      if (prev->first <= new_range.first && prev->last >= new_range.first)
+      {
+        /* Overlap: extend the existing range if new_range.last is beyond it */
+        if (new_range.last > prev->last)
+        {
+          range_t extended{prev->first, new_range.last};
+          ranges.erase(prev);
+          auto it= ranges.emplace(extended).first;
+          /* Check if we now overlap with next range */
+          if (it != r_end && std::next(it) != r_end)
+          {
+            auto next= std::next(it);
+            if (it->last + 1 == next->first)
+            {
+              merge_range(next, it);
+            }
+          }
+        }
+        return;
+      }
+      if (prev->last + 1 == new_range.first)
+      {
+        /* Merge with previous range */
+        range_t merged{prev->first, new_range.last};
+        ranges.erase(prev);
+        auto it= ranges.emplace(merged).first;
+        /* Check if we now overlap with next range */
+        if (it != r_end && std::next(it) != r_end)
+        {
+          auto next= std::next(it);
+          if (it->last + 1 == next->first)
+          {
+            merge_range(next, it);
+          }
+        }
+        return;
+      }
+      goto new_range;
     }
   }
 

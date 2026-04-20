@@ -38,7 +38,7 @@ Created 10/25/1995 Heikki Tuuri
 #include "log0recv.h"
 #include "dict0types.h"
 #include "ilist.h"
-#include "range_set.h"
+#include <set>
 #include <mutex>
 
 struct unflushed_spaces_tag_t;
@@ -86,6 +86,205 @@ struct fil_space_crypt_t;
 
 struct fil_node_t;
 
+/** Structure to store first and last value of range */
+struct range_t
+{
+  uint32_t first;
+  uint32_t last;
+};
+
+/** Sort the range based on first value of the range */
+struct range_compare
+{
+  bool operator() (const range_t lhs, const range_t rhs) const
+  {
+    return lhs.first < rhs.first;
+  }
+};
+
+using range_set_t= std::set<range_t, range_compare>;
+/** Range to store the set of ranges of integers */
+class range_set
+{
+private:
+  range_set_t ranges;
+
+  range_set_t::iterator find(uint32_t value) const
+  {
+    auto r_offset= ranges.lower_bound({value, value});
+    const auto r_end= ranges.end();
+    if (r_offset != r_end);
+    else if (empty())
+      return r_end;
+    else
+      r_offset= std::prev(r_end);
+    if (r_offset->first <= value && r_offset->last >= value)
+      return r_offset;
+    return r_end;
+  }
+public:
+  /** Merge the current range with previous range.
+  @param[in] range      range to be merged
+  @param[in] prev_range range to be merged with next */
+  void merge_range(range_set_t::iterator range,
+		   range_set_t::iterator prev_range)
+  {
+    if (range->first != prev_range->last + 1)
+      return;
+
+    /* Merge the current range with previous range */
+    range_t new_range {prev_range->first, range->last};
+    ranges.erase(prev_range);
+    ranges.erase(range);
+    ranges.emplace(new_range);
+  }
+
+  /** Split the range and add two more ranges
+  @param[in] range	range to be split
+  @param[in] value	Value to be removed from range */
+  void split_range(range_set_t::iterator range, uint32_t value)
+  {
+    range_t split1{range->first, value - 1};
+    range_t split2{value + 1, range->last};
+
+    /* Remove the existing element */
+    ranges.erase(range);
+
+    /* Insert the two elements */
+    ranges.emplace(split1);
+    ranges.emplace(split2);
+  }
+
+  /** Remove the value with the given range
+  @param[in,out] range  range to be changed
+  @param[in]	 value	value to be removed */
+  void remove_within_range(range_set_t::iterator range, uint32_t value)
+  {
+    range_t new_range{range->first, range->last};
+    if (value == range->first)
+    {
+      if (range->first == range->last)
+      {
+        ranges.erase(range);
+        return;
+      }
+      else
+        new_range.first++;
+    }
+    else if (value == range->last)
+      new_range.last--;
+    else if (range->first < value && range->last > value)
+      return split_range(range, value);
+
+    ranges.erase(range);
+    ranges.emplace(new_range);
+  }
+
+  /** Remove the value from the ranges.
+  @param[in]	value	Value to be removed. */
+  void remove_value(uint32_t value)
+  {
+    if (empty())
+      return;
+    range_t new_range {value, value};
+    range_set_t::iterator range= ranges.lower_bound(new_range);
+    if (range == ranges.end())
+      return remove_within_range(std::prev(range), value);
+
+    if (range->first > value && range != ranges.begin())
+      /* Iterate the previous ranges to delete */
+      return remove_within_range(std::prev(range), value);
+    return remove_within_range(range, value);
+  }
+  /** Add the value within the existing range
+  @param[in]	range	range to be modified
+  @param[in]	value	value to be added */
+  range_set_t::iterator add_within_range(range_set_t::iterator range,
+                                         uint32_t value)
+  {
+    if (range->first <= value && range->last >= value)
+      return range;
+
+    range_t new_range{range->first, range->last};
+    if (range->last + 1 == value)
+      new_range.last++;
+    else if (range->first - 1 == value)
+      new_range.first--;
+    else return ranges.end();
+    ranges.erase(range);
+    return ranges.emplace(new_range).first;
+  }
+  /** Add the range in the ranges set
+  @param[in]	new_range	range to be added */
+  void add_range(range_t new_range)
+  {
+    auto r_offset= ranges.lower_bound(new_range);
+    auto r_begin= ranges.begin();
+    auto r_end= ranges.end();
+    if (!ranges.size())
+    {
+new_range:
+      ranges.emplace(new_range);
+      return;
+    }
+
+    if (r_offset == r_end)
+    {
+      /* last range */
+      if (add_within_range(std::prev(r_offset), new_range.first) == r_end)
+        goto new_range;
+    }
+    else if (r_offset == r_begin)
+    {
+      /* First range */
+      if (add_within_range(r_offset, new_range.first) == r_end)
+        goto new_range;
+    }
+    else if (r_offset->first - 1 == new_range.first)
+    {
+      /* Change starting of the existing range */
+      auto r_value= add_within_range(r_offset, new_range.first);
+      if (r_value != ranges.begin())
+        merge_range(r_value, std::prev(r_value));
+    }
+    else
+    {
+      /* previous range last_value alone */
+      if (add_within_range(std::prev(r_offset), new_range.first) == r_end)
+        goto new_range;
+    }
+  }
+
+ /** Add the value in the ranges
+ @param[in] value  value to be added */
+  void add_value(uint32_t value)
+  {
+    range_t new_range{value, value};
+    add_range(new_range);
+  }
+
+  bool remove_if_exists(uint32_t value)
+  {
+    auto r_offset= find(value);
+    if (r_offset != ranges.end())
+    {
+      remove_within_range(r_offset, value);
+      return true;
+    }
+    return false;
+  }
+
+  bool contains(uint32_t value) const
+  {
+    return find(value) != ranges.end();
+  }
+
+  ulint size() { return ranges.size(); }
+  void clear() { ranges.clear(); }
+  bool empty() const { return ranges.empty(); }
+  typename range_set_t::iterator begin() { return ranges.begin(); }
+  typename range_set_t::iterator end() { return ranges.end(); }
+};
 #endif
 
 /** Tablespace or log data space */

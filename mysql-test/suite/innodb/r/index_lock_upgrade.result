@@ -433,3 +433,125 @@ index_page_reorg_successful_t2_delete_random
 index_page_discards_t2_delete_random
 1
 DROP TABLE t2;
+# Test with table t3 (primary key + secondary index + non-indexed column)
+CREATE TABLE t3 (
+id INT NOT NULL,
+k INT NOT NULL DEFAULT 0,
+c INT NOT NULL DEFAULT 0,
+PRIMARY KEY (id),
+KEY (k)
+) ENGINE=InnoDB;
+# Insert rows with default k value
+InnoDB		0 transactions not purged
+INSERT INTO t3 (id) SELECT seq FROM seq_1_to_1000;
+# Rows inserted with default k
+SELECT COUNT(*) AS rows_inserted FROM t3;
+rows_inserted
+1000
+SELECT COUNT(DISTINCT k) AS distinct_values FROM t3;
+distinct_values
+1
+InnoDB		0 transactions not purged
+index_lock_upgrades_t3_insert
+9
+pessimistic_insert_calls_t3_insert
+11
+pessimistic_update_calls_t3_insert
+0
+pessimistic_delete_calls_t3_insert
+0
+optim_err_underflows_t3_insert
+0
+optim_err_overflows_t3_insert
+0
+index_x_lock_calls_t3_insert
+0
+index_page_splits_t3_insert
+11
+index_page_merge_attempts_t3_insert
+0
+index_page_merge_successful_t3_insert
+0
+index_page_reorg_successful_t3_insert
+0
+index_page_discards_t3_insert
+0
+# Sysbench update-index style: update non-indexed column using PK
+InnoDB		0 transactions not purged
+index_lock_upgrades_t3_sysbench_update_nonindexed
+0
+pessimistic_insert_calls_t3_sysbench_update_nonindexed
+0
+pessimistic_update_calls_t3_sysbench_update_nonindexed
+0
+pessimistic_delete_calls_t3_sysbench_update_nonindexed
+0
+optim_err_underflows_t3_sysbench_update_nonindexed
+0
+optim_err_overflows_t3_sysbench_update_nonindexed
+0
+index_x_lock_calls_t3_sysbench_update_nonindexed
+0
+index_page_splits_t3_sysbench_update_nonindexed
+0
+index_page_merge_attempts_t3_sysbench_update_nonindexed
+0
+index_page_merge_successful_t3_sysbench_update_nonindexed
+0
+index_page_reorg_successful_t3_sysbench_update_nonindexed
+0
+index_page_discards_t3_sysbench_update_nonindexed
+0
+# Update indexed column using PK
+InnoDB		0 transactions not purged
+index_lock_upgrades_t3_update_indexed
+5
+pessimistic_insert_calls_t3_update_indexed
+5
+pessimistic_update_calls_t3_update_indexed
+0
+pessimistic_delete_calls_t3_update_indexed
+4
+optim_err_underflows_t3_update_indexed
+0
+optim_err_overflows_t3_update_indexed
+0
+index_x_lock_calls_t3_update_indexed
+19
+index_page_splits_t3_update_indexed
+5
+index_page_merge_attempts_t3_update_indexed
+19
+index_page_merge_successful_t3_update_indexed
+4
+index_page_reorg_successful_t3_update_indexed
+4
+index_page_discards_t3_update_indexed
+0
+# Update primary key column
+InnoDB		0 transactions not purged
+index_lock_upgrades_t3_update_pk
+11
+pessimistic_insert_calls_t3_update_pk
+11
+pessimistic_update_calls_t3_update_pk
+0
+pessimistic_delete_calls_t3_update_pk
+11
+optim_err_underflows_t3_update_pk
+0
+optim_err_overflows_t3_update_pk
+0
+index_x_lock_calls_t3_update_pk
+24
+index_page_splits_t3_update_pk
+11
+index_page_merge_attempts_t3_update_pk
+24
+index_page_merge_successful_t3_update_pk
+11
+index_page_reorg_successful_t3_update_pk
+9
+index_page_discards_t3_update_pk
+0
+DROP TABLE t3;

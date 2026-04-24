@@ -132,29 +132,29 @@ rows_remaining
 500
 InnoDB		0 transactions not purged
 index_lock_upgrades_t1_delete_upper_half
-3
+186
 pessimistic_insert_calls_t1_delete_upper_half
 0
 pessimistic_update_calls_t1_delete_upper_half
 0
 pessimistic_delete_calls_t1_delete_upper_half
-6
+189
 optim_err_underflows_t1_delete_upper_half
 0
 optim_err_overflows_t1_delete_upper_half
 0
 index_x_lock_calls_t1_delete_upper_half
-1
+0
 index_page_splits_t1_delete_upper_half
 0
 index_page_merge_attempts_t1_delete_upper_half
-1
+186
 index_page_merge_successful_t1_delete_upper_half
-0
-index_page_reorg_successful_t1_delete_upper_half
-0
-index_page_discards_t1_delete_upper_half
 3
+index_page_reorg_successful_t1_delete_upper_half
+3
+index_page_discards_t1_delete_upper_half
+0
 # Delete even-numbered rows
 DELETE FROM t1 WHERE id % 2 = 0;
 # Rows remaining
@@ -163,23 +163,23 @@ rows_remaining
 250
 InnoDB		0 transactions not purged
 index_lock_upgrades_t1_delete_even
-0
+13
 pessimistic_insert_calls_t1_delete_even
 0
 pessimistic_update_calls_t1_delete_even
 0
 pessimistic_delete_calls_t1_delete_even
-2
+15
 optim_err_underflows_t1_delete_even
 0
 optim_err_overflows_t1_delete_even
 0
 index_x_lock_calls_t1_delete_even
-2
+0
 index_page_splits_t1_delete_even
 0
 index_page_merge_attempts_t1_delete_even
-2
+13
 index_page_merge_successful_t1_delete_even
 2
 index_page_reorg_successful_t1_delete_even
@@ -193,13 +193,13 @@ rows_remaining
 0
 InnoDB		0 transactions not purged
 index_lock_upgrades_t1_delete_random
-1
+31
 pessimistic_insert_calls_t1_delete_random
 0
 pessimistic_update_calls_t1_delete_random
 0
 pessimistic_delete_calls_t1_delete_random
-2
+32
 optim_err_underflows_t1_delete_random
 0
 optim_err_overflows_t1_delete_random
@@ -209,13 +209,13 @@ index_x_lock_calls_t1_delete_random
 index_page_splits_t1_delete_random
 0
 index_page_merge_attempts_t1_delete_random
-0
+31
 index_page_merge_successful_t1_delete_random
-0
+2
 index_page_reorg_successful_t1_delete_random
-0
-index_page_discards_t1_delete_random
 1
+index_page_discards_t1_delete_random
+0
 DROP TABLE t1;
 # Test with table t2 (primary key + secondary index on dt)
 CREATE TABLE t2 (
@@ -263,13 +263,13 @@ index_page_discards_t2_insert
 UPDATE t2 SET dt= '2025-01-01' + INTERVAL id SECOND;
 InnoDB		0 transactions not purged
 index_lock_upgrades_t2_update_null_to_notnull
-13
+608
 pessimistic_insert_calls_t2_update_null_to_notnull
 10
 pessimistic_update_calls_t2_update_null_to_notnull
 6
 pessimistic_delete_calls_t2_update_null_to_notnull
-6
+601
 optim_err_underflows_t2_update_null_to_notnull
 0
 optim_err_overflows_t2_update_null_to_notnull
@@ -279,7 +279,7 @@ index_x_lock_calls_t2_update_null_to_notnull
 index_page_splits_t2_update_null_to_notnull
 10
 index_page_merge_attempts_t2_update_null_to_notnull
-0
+595
 index_page_merge_successful_t2_update_null_to_notnull
 0
 index_page_reorg_successful_t2_update_null_to_notnull
@@ -290,13 +290,13 @@ index_page_discards_t2_update_null_to_notnull
 UPDATE t2 SET dt= '2026-01-01' + INTERVAL id SECOND;
 InnoDB		0 transactions not purged
 index_lock_upgrades_t2_update_inplace
-7
+551
 pessimistic_insert_calls_t2_update_inplace
 3
 pessimistic_update_calls_t2_update_inplace
 0
 pessimistic_delete_calls_t2_update_inplace
-8
+552
 optim_err_underflows_t2_update_inplace
 0
 optim_err_overflows_t2_update_inplace
@@ -306,7 +306,7 @@ index_x_lock_calls_t2_update_inplace
 index_page_splits_t2_update_inplace
 3
 index_page_merge_attempts_t2_update_inplace
-0
+544
 index_page_merge_successful_t2_update_inplace
 0
 index_page_reorg_successful_t2_update_inplace
@@ -317,13 +317,13 @@ index_page_discards_t2_update_inplace
 UPDATE t2 SET dt= NULL;
 InnoDB		0 transactions not purged
 index_lock_upgrades_t2_update_notnull_to_null
-429
+625
 pessimistic_insert_calls_t2_update_notnull_to_null
 43
 pessimistic_update_calls_t2_update_notnull_to_null
 422
 pessimistic_delete_calls_t2_update_notnull_to_null
-54
+250
 optim_err_underflows_t2_update_notnull_to_null
 382
 optim_err_overflows_t2_update_notnull_to_null
@@ -333,13 +333,13 @@ index_x_lock_calls_t2_update_notnull_to_null
 index_page_splits_t2_update_notnull_to_null
 43
 index_page_merge_attempts_t2_update_notnull_to_null
-382
+582
 index_page_merge_successful_t2_update_notnull_to_null
-46
+50
 index_page_reorg_successful_t2_update_notnull_to_null
-37
+41
 index_page_discards_t2_update_notnull_to_null
-4
+0
 # Delete upper half of rows
 DELETE FROM t2 WHERE id > (SELECT MAX(id) FROM t2) / 2;
 # Rows remaining
@@ -348,29 +348,29 @@ rows_remaining
 500
 InnoDB		0 transactions not purged
 index_lock_upgrades_t2_delete_upper_half
-4
+343
 pessimistic_insert_calls_t2_delete_upper_half
 0
 pessimistic_update_calls_t2_delete_upper_half
 0
 pessimistic_delete_calls_t2_delete_upper_half
-8
+347
 optim_err_underflows_t2_delete_upper_half
 0
 optim_err_overflows_t2_delete_upper_half
 0
 index_x_lock_calls_t2_delete_upper_half
-2
+0
 index_page_splits_t2_delete_upper_half
 0
 index_page_merge_attempts_t2_delete_upper_half
-2
+343
 index_page_merge_successful_t2_delete_upper_half
-0
-index_page_reorg_successful_t2_delete_upper_half
-0
-index_page_discards_t2_delete_upper_half
 4
+index_page_reorg_successful_t2_delete_upper_half
+4
+index_page_discards_t2_delete_upper_half
+0
 # Delete even-numbered rows
 DELETE FROM t2 WHERE id % 2 = 0;
 # Rows remaining
@@ -379,23 +379,23 @@ rows_remaining
 250
 InnoDB		0 transactions not purged
 index_lock_upgrades_t2_delete_even
-0
+15
 pessimistic_insert_calls_t2_delete_even
 0
 pessimistic_update_calls_t2_delete_even
 0
 pessimistic_delete_calls_t2_delete_even
-3
+18
 optim_err_underflows_t2_delete_even
 0
 optim_err_overflows_t2_delete_even
 0
 index_x_lock_calls_t2_delete_even
-4
+0
 index_page_splits_t2_delete_even
 0
 index_page_merge_attempts_t2_delete_even
-4
+15
 index_page_merge_successful_t2_delete_even
 4
 index_page_reorg_successful_t2_delete_even
@@ -409,13 +409,13 @@ rows_remaining
 0
 InnoDB		0 transactions not purged
 index_lock_upgrades_t2_delete_random
-1
+31
 pessimistic_insert_calls_t2_delete_random
 0
 pessimistic_update_calls_t2_delete_random
 0
 pessimistic_delete_calls_t2_delete_random
-2
+32
 optim_err_underflows_t2_delete_random
 0
 optim_err_overflows_t2_delete_random
@@ -425,13 +425,13 @@ index_x_lock_calls_t2_delete_random
 index_page_splits_t2_delete_random
 0
 index_page_merge_attempts_t2_delete_random
-0
+31
 index_page_merge_successful_t2_delete_random
-0
+2
 index_page_reorg_successful_t2_delete_random
-0
-index_page_discards_t2_delete_random
 1
+index_page_discards_t2_delete_random
+0
 DROP TABLE t2;
 # Test with table t3 (primary key + secondary index + non-indexed column)
 CREATE TABLE t3 (
@@ -505,53 +505,53 @@ index_page_discards_t3_sysbench_update_nonindexed
 # Update indexed column using PK
 InnoDB		0 transactions not purged
 index_lock_upgrades_t3_update_indexed
-5
+181
 pessimistic_insert_calls_t3_update_indexed
-5
+6
 pessimistic_update_calls_t3_update_indexed
 0
 pessimistic_delete_calls_t3_update_indexed
-4
+180
 optim_err_underflows_t3_update_indexed
 0
 optim_err_overflows_t3_update_indexed
 0
 index_x_lock_calls_t3_update_indexed
-19
+0
 index_page_splits_t3_update_indexed
-5
+6
 index_page_merge_attempts_t3_update_indexed
-19
+175
 index_page_merge_successful_t3_update_indexed
-4
+5
 index_page_reorg_successful_t3_update_indexed
-4
+5
 index_page_discards_t3_update_indexed
 0
 # Update primary key column
 InnoDB		0 transactions not purged
 index_lock_upgrades_t3_update_pk
-11
+170
 pessimistic_insert_calls_t3_update_pk
-11
+12
 pessimistic_update_calls_t3_update_pk
 0
 pessimistic_delete_calls_t3_update_pk
-11
+169
 optim_err_underflows_t3_update_pk
 0
 optim_err_overflows_t3_update_pk
 0
 index_x_lock_calls_t3_update_pk
-24
+0
 index_page_splits_t3_update_pk
-11
+12
 index_page_merge_attempts_t3_update_pk
-24
+158
 index_page_merge_successful_t3_update_pk
 11
 index_page_reorg_successful_t3_update_pk
-9
+11
 index_page_discards_t3_update_pk
 0
 DROP TABLE t3;

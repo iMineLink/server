@@ -147,6 +147,9 @@ bool purge_sys_t::is_purgeable(trx_id_t trx_id) const noexcept
 {
   latch.rd_lock(SRW_LOCK_CALL);
   bool purgeable= view.changes_visible(trx_id);
+  /* MDEV39272-DBG: temporary instrumentation, remove */
+  ib::info() << "MDEV39272-DBG is_purgeable(" << trx_id << ")=" << purgeable
+             << " view_low=" << view.low_limit_id();
   latch.rd_unlock();
   return purgeable;
 }
@@ -1457,6 +1460,10 @@ ulint trx_purge(trx_t *trx, ulint n_tasks, ulint history_size) noexcept
 
   THD *const thd{trx->mysql_thd};
   purge_sys.clone_oldest_view(thd);
+  /* MDEV39272-DBG: temporary instrumentation, remove;
+  is_purgeable(0) is a no-op that logs the cloned view's low limit. */
+  ib::info() << "MDEV39272-DBG trx_purge cloned view";
+  purge_sys.is_purgeable(0);
 
 #ifdef UNIV_DEBUG
   if (srv_purge_view_update_only_debug)

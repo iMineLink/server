@@ -1,0 +1,15 @@
+SET @old_view_update= @@global.innodb_trx_purge_view_update_only_debug;
+SET GLOBAL innodb_trx_purge_view_update_only_debug=1;
+CREATE TABLE t (a INT PRIMARY KEY, b VARCHAR(200) NOT NULL, KEY kb(b))
+ENGINE=InnoDB STATS_PERSISTENT=0;
+INSERT INTO t SELECT seq, LPAD(seq, 200, '0') FROM seq_1_to_60;
+DELETE FROM t;
+SET STATEMENT max_statement_time=1 FOR SET GLOBAL innodb_max_purge_lag_wait=1;
+SELECT COUNT(*) FROM t FORCE INDEX(kb);
+COUNT(*)
+30
+CHECK TABLE t;
+Table	Op	Msg_type	Msg_text
+test.t	check	status	OK
+DROP TABLE t;
+SET GLOBAL innodb_trx_purge_view_update_only_debug=@old_view_update;

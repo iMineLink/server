@@ -1,0 +1,41 @@
+--source include/have_innodb.inc
+--source include/have_debug.inc
+--source include/have_sequence.inc
+
+SET @old_view_update= @@global.innodb_trx_purge_view_update_only_debug;
+SET GLOBAL innodb_trx_purge_view_update_only_debug=1;
+
+CREATE TABLE t (a INT PRIMARY KEY, b VARCHAR(200) NOT NULL, KEY kb(b))
+ENGINE=InnoDB STATS_PERSISTENT=0;
+
+# Fill one secondary index leaf page.
+INSERT INTO t SELECT seq, LPAD(seq, 200, '0') FROM seq_1_to_60;
+
+# Delete-mark everything; with view_update_only the purge view advances
+# past the DELETE but no record is physically removed.
+DELETE FROM t;
+
+# Ensure the purge coordinator has cloned the read view.
+SET STATEMENT max_statement_time=1 FOR SET GLOBAL innodb_max_purge_lag_wait=1;
+
+# Re-insert records with the same key range as separate committed
+# transactions, pausing so the purge view advances past each one.
+# When the leaf page overflows, PAGE_MAX_TRX_ID belongs to an already
+# purgeable transaction, so btr_cur_optimistic_insert() must reclaim
+# space via btr_cur_try_purge_sec_del_marked() instead of splitting.
+--disable_query_log
+let $i= 61;
+while ($i <= 90)
+{
+  # Nudge the purge coordinator so it clones a read view that is newer
+  # than the previous INSERT before the next one runs.
+  SET STATEMENT max_statement_time=0.3 FOR SET GLOBAL innodb_max_purge_lag_wait=1;
+  eval INSERT INTO t VALUES ($i, LPAD($i, 200, '0'));
+  inc $i;
+}
+--enable_query_log
+
+SELECT COUNT(*) FROM t FORCE INDEX(kb);
+CHECK TABLE t;
+DROP TABLE t;
+SET GLOBAL innodb_trx_purge_view_update_only_debug=@old_view_update;

@@ -58,6 +58,7 @@ Created 10/16/1994 Heikki Tuuri
 #include "lock0lock.h"
 #include "zlib.h"
 #include "srv0start.h"
+#include "trx0purge.h"
 #include "mysql_com.h"
 #include "dict0stats.h"
 #include "row0ins.h"
@@ -2305,6 +2306,163 @@ static void btr_cur_prefetch_siblings(const buf_block_t *block,
     buf_read_page_background(id, space, trx);
 }
 
+/** Try to purge delete-marked records from a secondary index leaf page
+to free space for an insert, without requiring a pessimistic operation.
+
+Correctness rests on the invariant that PAGE_MAX_TRX_ID upper-bounds the
+id of every transaction that modified any record on a secondary index
+leaf page of a non-temporary table, delete-marking included: delete-marks
+go through lock_sec_rec_modify_check_and_lock(), which invokes
+page_update_max_trx_id() in the same mini-transaction under the same page
+X-latch, and the BTR_NO_LOCKING_FLAG paths either compensate explicitly
+(online DDL apply, see row_log_apply_op_low()) or delete-mark a record
+that the same transaction inserted (rollback, see
+row_undo_mod_del_mark_or_remove_sec_low()), whose insert already raised
+PAGE_MAX_TRX_ID to that id. The same invariant already underpins the
+consistent-read shortcut in row_search_mvcc() that trusts a secondary
+index record, delete-mark included, without a clustered index lookup
+whenever the read view sees PAGE_MAX_TRX_ID, and the implicit-lock
+short-circuit in lock_sec_rec_some_has_impl().
+
+Given the invariant, purge_sys.is_purgeable(PAGE_MAX_TRX_ID) proves that
+every transaction that touched the page is finished and visible to all
+current and future read views. Hence every delete-marked record on the
+page is invisible to every reader (each would skip it via the
+row_search_mvcc() shortcut above), carries no implicit lock, and cannot
+be needed by the current clustered index record version: a committed
+transaction making the clustered record match this entry would have
+un-delete-marked it before committing. Removing such records is therefore
+observationally equivalent to what purge would eventually do, and purge
+finding them already gone is fine (row_purge_remove_sec_if_poss_leaf()
+is if-possible by design). The answer is stable because the purge view
+only advances.
+
+This per-page check is conservative: one recent insert anywhere on the
+page vetoes purging arbitrarily old delete-marks. MDEV-17598 (per-record
+transaction id in secondary index leaf records) would shrink that
+conservatism, not fix a correctness gap.
+
+@param block    secondary index leaf page, X-latched
+@param index    secondary index
+@param protected_rec  the caller's insertion-point record, must not be
+                purged even if delete-marked (the caller keeps using it
+                after this function returns)
+@param rec_size size of the record the caller wants to insert; once enough
+                space has been reclaimed for it, stop purging
+@param mtr      mini-transaction
+@return the number of records purged */
+static ulint btr_cur_try_purge_sec_del_marked(
+	buf_block_t*		block,
+	dict_index_t*		index,
+	const rec_t*		protected_rec,
+	ulint			rec_size,
+	mtr_t*			mtr)
+{
+	ut_ad(page_is_leaf(block->page.frame));
+	ut_ad(!index->is_clust());
+	ut_ad(!index->table->is_temporary());
+	ut_ad(mtr->memo_contains_flagged(block, MTR_MEMO_PAGE_X_FIX));
+
+	page_t* page = buf_block_get_frame(block);
+	const ulint comp = page_is_comp(page);
+
+	/* If PAGE_MAX_TRX_ID is still visible to some active
+	transaction, we cannot safely purge anything without per-record
+	clustered index lookups, which we must not do here because of
+	latch ordering. See the function comment for why this per-page
+	check is sufficient. */
+	const trx_id_t max_trx_id = page_get_max_trx_id(page);
+	if (UNIV_UNLIKELY(!max_trx_id) || !purge_sys.is_purgeable(max_trx_id)) {
+		/* MDEV39272-DBG: temporary instrumentation, remove */
+		ib::info() << "MDEV39272-DBG bail index=" << index->name
+			   << " max_trx_id=" << max_trx_id;
+		return 0;
+	}
+
+	/* All modifications on this page are committed and older than
+	the purge view.  Every delete-marked record is safe to remove. */
+
+	ulint n_purged = 0;
+	mem_heap_t* heap = nullptr;
+	rec_offs offsets_[REC_OFFS_NORMAL_SIZE];
+	rec_offs* offsets = offsets_;
+	rec_offs_init(offsets_);
+
+	page_cur_t cur;
+	page_cur_set_before_first(block, &cur);
+	cur.index = index;
+	if (UNIV_UNLIKELY(!page_cur_move_to_next(&cur))) {
+		return 0;
+	}
+
+	while (!page_cur_is_after_last(&cur)) {
+		rec_t* rec = page_cur_get_rec(&cur);
+
+		/* The caller keeps using protected_rec (its insertion
+		point) after we return; never purge it out from under
+		them, even if it is delete-marked. */
+		if (rec == protected_rec
+		    || !rec_get_deleted_flag(rec, comp)) {
+			if (UNIV_UNLIKELY(!page_cur_move_to_next(&cur))) {
+				break;
+			}
+			continue;
+		}
+
+		/* Do not leave the page with fewer than 1 record;
+		an empty page should only result from a pessimistic
+		delete (merge). */
+		if (UNIV_UNLIKELY(page_get_n_recs(page) <= 1)) {
+			break;
+		}
+
+		offsets = rec_get_offsets(rec, index, offsets,
+					 index->n_core_fields,
+					 ULINT_UNDEFINED, &heap);
+
+		/* Records with off-page columns need pessimistic purge. */
+		if (rec_offs_any_extern(offsets)) {
+			if (UNIV_UNLIKELY(!page_cur_move_to_next(&cur))) {
+				break;
+			}
+			continue;
+		}
+
+		lock_update_delete(block, rec);
+#ifdef BTR_CUR_HASH_ADAPT
+		/* Prepare AHI for the deletion; we construct a
+		minimal btr_cur_t on the stack for this purpose. */
+		{
+			btr_cur_t tmp_cursor;
+			tmp_cursor.page_cur = cur;
+			btr_search_update_hash_on_delete(&tmp_cursor);
+		}
+#endif /* BTR_CUR_HASH_ADAPT */
+
+		/* page_cur_delete_rec advances cur to the next record. */
+		page_cur_delete_rec(&cur, offsets, mtr);
+		n_purged++;
+
+		/* Stop as soon as we have reclaimed enough space; no
+		need to sweep the rest of the page and hold the page
+		latch/log more deletes than the caller actually needs. */
+		if (page_get_max_insert_size_after_reorganize(page, 1)
+		    >= rec_size) {
+			break;
+		}
+	}
+
+	if (UNIV_LIKELY_NULL(heap)) {
+		mem_heap_free(heap);
+	}
+
+	/* MDEV39272-DBG: temporary instrumentation, remove */
+	ib::info() << "MDEV39272-DBG purged n=" << n_purged
+		   << " index=" << index->name;
+
+	return n_purged;
+}
+
 /*************************************************************//**
 Tries to perform an insert to a page in an index tree, next to cursor.
 It is assumed that mtr holds an x-latch on the page. The operation does
@@ -2433,7 +2591,29 @@ fail_err:
 
 	ulint	max_size = page_get_max_insert_size_after_reorganize(page, 1);
 	if (max_size < rec_size) {
-		goto fail;
+		/* For secondary index leaf pages, try to reclaim space
+		by purging delete-marked records whose transactions are
+		no longer visible.  This avoids the expensive pessimistic
+		path (tree SX-latch + page split) when purge has merely
+		fallen behind the workload. */
+		/* Temporary tables are excluded because their
+		BTR_NO_LOCKING_FLAG operations do not maintain
+		PAGE_MAX_TRX_ID, and the current transaction could
+		still roll back its own delete-marks. */
+		if (leaf && !block->page.zip.data
+		    && !dict_index_is_clust(index)
+		    && !index->is_spatial()
+		    && !index->table->is_temporary()
+		    && btr_cur_try_purge_sec_del_marked(
+			    block, index, btr_cur_get_rec(cursor),
+			    rec_size, mtr)) {
+			max_size = page_get_max_insert_size_after_reorganize(
+				page, 1);
+		}
+
+		if (max_size < rec_size) {
+			goto fail;
+		}
 	}
 
 	const ulint n_recs = page_get_n_recs(page);

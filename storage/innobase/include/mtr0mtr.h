@@ -41,13 +41,18 @@ Created 11/26/1995 Heikki Tuuri
 @return	old mode */
 #define mtr_set_log_mode(m, d)	(m)->set_log_mode((d))
 
+#ifdef UNIV_DEBUG
+/** Number of times mtr_x_lock_index() was called. */
+extern Atomic_counter<uint64_t> mtr_n_index_x_lock_calls;
+#endif
+
 #ifdef UNIV_PFS_RWLOCK
 # define mtr_s_lock_index(i,m)	(m)->s_lock(__FILE__, __LINE__, &(i)->lock)
-# define mtr_x_lock_index(i,m)	(m)->x_lock(__FILE__, __LINE__, &(i)->lock)
+# define mtr_x_lock_index(i,m)	do { (m)->x_lock(__FILE__, __LINE__, &(i)->lock); ut_d(++mtr_n_index_x_lock_calls); } while (0)
 # define mtr_sx_lock_index(i,m)	(m)->u_lock(__FILE__, __LINE__, &(i)->lock)
 #else
 # define mtr_s_lock_index(i,m)	(m)->s_lock(&(i)->lock)
-# define mtr_x_lock_index(i,m)	(m)->x_lock(&(i)->lock)
+# define mtr_x_lock_index(i,m)	do { (m)->x_lock(&(i)->lock); ut_d(++mtr_n_index_x_lock_calls); } while (0)
 # define mtr_sx_lock_index(i,m)	(m)->u_lock(&(i)->lock)
 #endif
 

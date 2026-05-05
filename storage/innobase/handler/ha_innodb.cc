@@ -890,6 +890,22 @@ static MYSQL_THDVAR_STR(tmpdir,
 
 static size_t truncated_status_writes;
 
+#ifdef UNIV_DEBUG
+/** Expose an Atomic_counter<uint64_t> as a SHOW_ULONGLONG status variable.
+The server-internal enum_mysql_show_type only has SHOW_ATOMIC_COUNTER_UINT32_T,
+no 64-bit equivalent, so we materialize the value into the SHOW_VAR buffer
+ourselves. */
+template<Atomic_counter<uint64_t> *Counter>
+static int show_atomic_counter_u64(MYSQL_THD, SHOW_VAR *var, void *buff,
+                                   system_status_var *, enum enum_var_type)
+{
+  var->type= SHOW_ULONGLONG;
+  var->value= buff;
+  *static_cast<ulonglong*>(buff)= *Counter;
+  return 0;
+}
+#endif /* UNIV_DEBUG */
+
 static SHOW_VAR innodb_status_variables[]= {
 #ifdef BTR_CUR_HASH_ADAPT
   {"adaptive_hash_hash_searches", &export_vars.innodb_ahi_hit, SHOW_SIZE_T},
@@ -1070,6 +1086,37 @@ static SHOW_VAR innodb_status_variables[]= {
 
   /* InnoDB bulk operations */
   {"bulk_operations", &export_vars.innodb_bulk_operations, SHOW_SIZE_T},
+
+#ifdef UNIV_DEBUG
+  {"btr_cur_n_index_lock_upgrades",
+   (void*) &show_atomic_counter_u64<
+     &btr_cur_n_index_lock_upgrades>,
+   SHOW_SIMPLE_FUNC},
+  {"btr_cur_pessimistic_insert_calls",
+   (void*) &show_atomic_counter_u64<
+     &btr_cur_pessimistic_insert_calls>,
+   SHOW_SIMPLE_FUNC},
+  {"btr_cur_pessimistic_update_calls",
+   (void*) &show_atomic_counter_u64<
+     &btr_cur_pessimistic_update_calls>,
+   SHOW_SIMPLE_FUNC},
+  {"btr_cur_pessimistic_delete_calls",
+   (void*) &show_atomic_counter_u64<
+     &btr_cur_pessimistic_delete_calls>,
+   SHOW_SIMPLE_FUNC},
+  {"btr_cur_pessimistic_update_optim_err_underflows",
+   (void*) &show_atomic_counter_u64<
+     &btr_cur_pessimistic_update_optim_err_underflows>,
+   SHOW_SIMPLE_FUNC},
+  {"btr_cur_pessimistic_update_optim_err_overflows",
+   (void*) &show_atomic_counter_u64<
+     &btr_cur_pessimistic_update_optim_err_overflows>,
+   SHOW_SIMPLE_FUNC},
+  {"mtr_n_index_x_lock_calls",
+   (void*) &show_atomic_counter_u64<
+     &mtr_n_index_x_lock_calls>,
+   SHOW_SIMPLE_FUNC},
+#endif /* UNIV_DEBUG */
 
   {NullS, NullS, SHOW_LONG}
 };
@@ -19811,6 +19858,20 @@ static MYSQL_SYSVAR_ENUM(default_row_format, innodb_default_row_format,
   NULL, NULL, DEFAULT_ROW_FORMAT_DYNAMIC,
   &innodb_default_row_format_typelib);
 
+static MYSQL_SYSVAR_BOOL(reduce_pessimistic_update_fallbacks,
+  btr_cur_reduce_pessimistic_update_fallbacks, PLUGIN_VAR_OPCMDARG,
+  "Enable the btr_cur_*_update() optimizations when the"
+  " UPDATE is increasing the size of a record: gate the"
+  " DB_UNDERFLOW return of btr_cur_optimistic_update() behind actual"
+  " record shrinkage so freshly split pages are not re-merged when an"
+  " update is growing a record, and skip the in-place reinsert in"
+  " btr_cur_pessimistic_update() when an uncompressed page cannot"
+  " satisfy BTR_CUR_PAGE_REORGANIZE_LIMIT after reorganize, falling"
+  " through to a page split instead. Trades some B-tree self-healing"
+  " for a lower rate of pessimistic update fallbacks and the index-lock"
+  " upgrades they induce",
+  NULL, NULL, FALSE);
+
 #ifdef UNIV_DEBUG
 static MYSQL_SYSVAR_UINT(limit_optimistic_insert_debug,
   btr_cur_limit_optimistic_insert_debug, PLUGIN_VAR_RQCMDARG,
@@ -20094,6 +20155,7 @@ static struct st_mysql_sys_var* innobase_system_variables[]= {
   MYSQL_SYSVAR(compression_failure_threshold_pct),
   MYSQL_SYSVAR(compression_pad_pct_max),
   MYSQL_SYSVAR(default_row_format),
+  MYSQL_SYSVAR(reduce_pessimistic_update_fallbacks),
 #ifdef UNIV_DEBUG
   MYSQL_SYSVAR(limit_optimistic_insert_debug),
   MYSQL_SYSVAR(trx_purge_view_update_only_debug),

@@ -105,7 +105,30 @@ ulint	btr_cur_n_sea_old;
 #ifdef UNIV_DEBUG
 /* Flag to limit optimistic insert records */
 uint	btr_cur_limit_optimistic_insert_debug;
+/** Number of times index lock was upgraded from SX to X */
+Atomic_counter<uint64_t> btr_cur_n_index_lock_upgrades{0};
+/** Number of times btr_cur_pessimistic_insert() was called */
+Atomic_counter<uint64_t> btr_cur_pessimistic_insert_calls{0};
+/** Number of times btr_cur_pessimistic_update() was called */
+Atomic_counter<uint64_t> btr_cur_pessimistic_update_calls{0};
+/** Number of times btr_cur_pessimistic_delete() was called */
+Atomic_counter<uint64_t> btr_cur_pessimistic_delete_calls{0};
+/** Number of times DB_UNDERFLOW was returned as optimistic update error in btr_cur_pessimistic_update() */
+Atomic_counter<uint64_t> btr_cur_pessimistic_update_optim_err_underflows{0};
+/** Number of times DB_OVERFLOW was returned as optimistic update error in btr_cur_pessimistic_update() */
+Atomic_counter<uint64_t> btr_cur_pessimistic_update_optim_err_overflows{0};
 #endif /* UNIV_DEBUG */
+
+/** innodb_reduce_pessimistic_update_fallbacks: enable the MDEV-38814
+pessimistic-update optimizations. When ON, btr_cur_optimistic_update()
+gates its DB_UNDERFLOW return behind actual record shrinkage (so a
+freshly split page is not re-merged just because an update grew a
+record), and btr_cur_pessimistic_update() skips btr_cur_insert_if_possible()
+on the DB_OVERFLOW fallback for a growing record when an uncompressed
+page cannot satisfy BTR_CUR_PAGE_REORGANIZE_LIMIT after a reorganize,
+falling through to a page split instead (only size-growing UPDATEs pay
+the cost of an early page split). */
+my_bool btr_cur_reduce_pessimistic_update_fallbacks;
 
 /** In the optimistic insert, if the insert does not fit, but this much space
 can be released by page reorganize, then it is reorganized */
@@ -1599,6 +1622,7 @@ ATTRIBUTE_COLD void mtr_t::index_lock_upgrade()
   index_lock *lock= static_cast<index_lock*>(slot.object);
   lock->u_x_upgrade(SRW_LOCK_CALL);
   slot.type= MTR_MEMO_X_LOCK;
+  ut_d(++btr_cur_n_index_lock_upgrades);
 }
 
 /** Mark a non-leaf page "least recently used", but avoid invoking
@@ -2572,6 +2596,8 @@ btr_cur_pessimistic_insert(
 	big_rec_t*	big_rec_vec	= NULL;
 	bool		inherit = false;
 	uint32_t	n_reserved	= 0;
+
+	ut_d(++btr_cur_pessimistic_insert_calls);
 
 	ut_ad(dtuple_check_typed(entry));
 	ut_ad(thr || !(~flags & (BTR_NO_LOCKING_FLAG | BTR_NO_UNDO_LOG_FLAG)));
@@ -3602,10 +3628,16 @@ any_extern:
 		goto func_exit;
 	}
 
-	if (UNIV_UNLIKELY(page_get_data_size(page)
+	if (UNIV_UNLIKELY((!btr_cur_reduce_pessimistic_update_fallbacks
+			   || new_rec_size < old_rec_size)
+			  && page_get_data_size(page)
 			  - old_rec_size + new_rec_size
 			  < BTR_CUR_PAGE_COMPRESS_LIMIT(index))) {
-		/* The page would become too empty */
+		/* The page would become too empty. When
+		innodb_reduce_pessimistic_update_fallbacks is enabled, only
+		treat this as DB_UNDERFLOW if the record is actually
+		shrinking; otherwise a freshly split page would be re-merged
+		even though the update is growing the record. */
 		err = DB_UNDERFLOW;
 		goto func_exit;
 	}
@@ -3797,6 +3829,8 @@ btr_cur_pessimistic_update(
 	block = btr_cur_get_block(cursor);
 	index = cursor->index();
 
+	ut_d(++btr_cur_pessimistic_update_calls);
+
 	ut_ad(mtr->memo_contains_flagged(&index->lock, MTR_MEMO_X_LOCK |
 					 MTR_MEMO_SX_LOCK));
 	ut_ad(mtr->memo_contains_flagged(block, MTR_MEMO_PAGE_X_FIX));
@@ -3821,6 +3855,9 @@ btr_cur_pessimistic_update(
 		flags,
 		cursor, offsets, offsets_heap, update,
 		cmpl_info, thr, trx_id, mtr);
+
+	ut_d(btr_cur_pessimistic_update_optim_err_underflows += (err == DB_UNDERFLOW));
+	ut_d(btr_cur_pessimistic_update_optim_err_overflows += (err == DB_OVERFLOW));
 
 	switch (err) {
 	case DB_ZIP_OVERFLOW:
@@ -3992,8 +4029,33 @@ btr_cur_pessimistic_update(
 		goto return_after_reservations;
 	}
 
-	rec = btr_cur_insert_if_possible(cursor, new_entry,
-					 offsets, offsets_heap, n_ext, mtr);
+	/* Force a page split instead of the in-place reinsert below when:
+	  - sysvar opt-in;
+	  - optimistic update returned DB_OVERFLOW (the fit problem this
+	    optimization addresses; DB_UNDERFLOW means the page is too sparse
+	    and the legacy compress path is the right answer);
+	  - uncompressed page: the reorganize-fit check uses uncompressed-page
+	    accounting and is not meaningful for ROW_FORMAT=COMPRESSED;
+	  - page still has at least one record after the delete above (so
+	    the forced split would produce at least 1+1, not 0+1);
+	  - the new record is strictly larger than the old one (only
+	    size-growing UPDATEs should pay the cost of an early split);
+	  - the page is too full to satisfy BTR_CUR_PAGE_REORGANIZE_LIMIT
+	    after a reorganize, so the legacy in-place retry would just churn.
+	rec=NULL falls through to the split path. */
+	if (btr_cur_reduce_pessimistic_update_fallbacks
+	    && optim_err == DB_OVERFLOW
+	    && !buf_block_get_page_zip(block)
+	    && page_get_n_recs(block->page.frame) > 0
+	    && rec_get_converted_size(index, new_entry, n_ext)
+	       > rec_offs_size(*offsets)
+	    && page_get_max_insert_size_after_reorganize(
+	        block->page.frame, 1) < BTR_CUR_PAGE_REORGANIZE_LIMIT) {
+		rec = NULL;
+	} else {
+		rec = btr_cur_insert_if_possible(cursor, new_entry,
+						 offsets, offsets_heap, n_ext, mtr);
+	}
 
 	if (rec) {
 		page_cursor->rec = rec;
@@ -4508,6 +4570,8 @@ btr_cur_pessimistic_delete(
 	block = btr_cur_get_block(cursor);
 	page = buf_block_get_frame(block);
 	index = btr_cur_get_index(cursor);
+
+	ut_d(++btr_cur_pessimistic_delete_calls);
 
 	ut_ad(flags == 0 || flags == BTR_CREATE_FLAG);
 	ut_ad(!dict_index_is_online_ddl(index)

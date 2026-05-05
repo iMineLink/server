@@ -1378,6 +1378,18 @@ NUMERIC_BLOCK_SIZE	NULL
 ENUM_VALUE_LIST	OFF,ON
 READ_ONLY	NO
 COMMAND_LINE_ARGUMENT	OPTIONAL
+VARIABLE_NAME	INNODB_REDUCE_PESSIMISTIC_UPDATE_FALLBACKS
+SESSION_VALUE	NULL
+DEFAULT_VALUE	OFF
+VARIABLE_SCOPE	GLOBAL
+VARIABLE_TYPE	BOOLEAN
+VARIABLE_COMMENT	Enable the btr_cur_*_update() optimizations when the UPDATE is increasing the size of a record: gate the DB_UNDERFLOW return of btr_cur_optimistic_update() behind actual record shrinkage so freshly split pages are not re-merged when an update is growing a record, and skip the in-place reinsert in btr_cur_pessimistic_update() when an uncompressed page cannot satisfy BTR_CUR_PAGE_REORGANIZE_LIMIT after reorganize, falling through to a page split instead. Trades some B-tree self-healing for a lower rate of pessimistic update fallbacks and the index-lock upgrades they induce
+NUMERIC_MIN_VALUE	NULL
+NUMERIC_MAX_VALUE	NULL
+NUMERIC_BLOCK_SIZE	NULL
+ENUM_VALUE_LIST	OFF,ON
+READ_ONLY	NO
+COMMAND_LINE_ARGUMENT	OPTIONAL
 VARIABLE_NAME	INNODB_ROLLBACK_ON_TIMEOUT
 SESSION_VALUE	NULL
 DEFAULT_VALUE	OFF

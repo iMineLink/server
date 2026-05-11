@@ -166,10 +166,11 @@ sub gcov_one_file {
 
   (my $filename = $_)=~ s/\.[^.]+$//; # remove extension
   my $gcov_file_path= $File::Find::dir."/$filename.gcov";
-  if (! -f $gcov_file_path)
-  {
-    return;
-  }
+  my $exists= $gcc_version < 9
+    ? -f $gcov_file_path
+    : -f $File::Find::dir."/"
+        . ($gcc_version >= 11 ? ($_ =~ s/\.gcda$//r) : $_) . ".gcov.json.gz";
+  return unless $exists;
   # now, read the generated file
   if ($gcc_version <9){
     for my $gcov_file (<$_*.gcov>) {

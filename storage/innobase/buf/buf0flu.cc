@@ -112,6 +112,7 @@ static void buf_flush_validate_skip() noexcept
 
 void buf_pool_t::page_cleaner_wakeup(bool for_LRU) noexcept
 {
+  mysql_mutex_assert_owner(&flush_list_mutex);
   ut_d(buf_flush_validate_skip());
   if (!page_cleaner_idle())
   {
@@ -154,7 +155,7 @@ void buf_pool_t::page_cleaner_wakeup(bool for_LRU) noexcept
                           last_activity_count == srv_get_activity_count())) ||
       srv_max_buf_pool_modified_pct <= dirty_pct)
   {
-    page_cleaner_status-= PAGE_CLEANER_IDLE;
+    page_cleaner_idle_flag= false;
     pthread_cond_signal(&do_flush_list);
   }
 }
@@ -2116,33 +2117,32 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
   Atomic_relaxed<lsn_t> &limit= furious
     ? buf_flush_sync_lsn : buf_flush_async_lsn;
 
-  if (limit < lsn)
-  {
-    mysql_mutex_lock(&buf_pool.flush_list_mutex);
-    if (limit < lsn)
-    {
-      limit= lsn;
-      if (furious)
-      {
-        /* Request any concurrent threads to wait for this batch to complete,
-        in log_free_check(). */
-        log_sys.set_check_for_checkpoint(true);
-        /* Immediately wake up buf_flush_page_cleaner(), even when it
-        is in the middle of a 1-second my_cond_timedwait(). */
-      wake:
-        buf_pool.page_cleaner_set_idle(false);
-        pthread_cond_signal(&buf_pool.do_flush_list);
-      }
-      else if (buf_pool.page_cleaner_idle())
-        /* In non-furious mode, concurrent writes to the log will remain
-        possible, and we are gently requesting buf_flush_page_cleaner()
-        to do more work to avoid a later call with furious=true.
-        We will only wake the buf_flush_page_cleaner() from an indefinite
-        my_cond_wait(), but we will not disturb the regular 1-second sleep. */
-        goto wake;
-    }
-    mysql_mutex_unlock(&buf_pool.flush_list_mutex);
-  }
+  /* Lock-free monotonic-max via CAS. */
+  lsn_t cur= limit;
+  while (cur < lsn)
+    if (limit.compare_exchange_strong(cur, lsn))
+      goto bumped;
+  return;
+
+bumped:
+  if (furious)
+    /* Request any concurrent threads to wait for this batch to complete,
+    in log_free_check(). */
+    log_sys.set_check_for_checkpoint(true);
+
+  /* Cleaner observed busy: no wake needed; it re-reads buf_flush_async_lsn
+  each iteration of its work loop and will pick up the CAS above.  A
+  stale-false read is rescued by the next wake-side path under
+  buf_pool.flush_list_mutex — see the comment in buf_flush_page_cleaner()
+  above the indefinite my_cond_wait() for the full argument. */
+  if (!furious && !buf_pool.page_cleaner_idle())
+    return;
+
+  /* Signal under buf_pool.flush_list_mutex (see buf_flush_page_cleaner()). */
+  mysql_mutex_lock(&buf_pool.flush_list_mutex);
+  buf_pool.page_cleaner_set_idle(false);
+  pthread_cond_signal(&buf_pool.do_flush_list);
+  mysql_mutex_unlock(&buf_pool.flush_list_mutex);
 }
 
 /** Conduct checkpoint-related flushing for innodb_flush_sync=ON,
@@ -2502,11 +2502,37 @@ static void buf_flush_page_cleaner() noexcept
         break;
 
       if (buf_pool.page_cleaner_idle() &&
+          !buf_flush_async_lsn && !buf_flush_sync_lsn &&
           (!UT_LIST_GET_LEN(buf_pool.flush_list) ||
            srv_max_dirty_pages_pct_lwm == 0.0))
       {
         buf_pool.LRU_warned_clear();
-        /* We are idle; wait for buf_pool.page_cleaner_wakeup() */
+        /* Predicate observed as fully idle; wait indefinitely for the
+        next buf_pool_t::page_cleaner_wakeup().
+
+        The !buf_flush_async_lsn gate above is required: a non-furious
+        buf_flush_ahead() caller bumps buf_flush_async_lsn via a lock-free
+        CAS and may take the early-return without acquiring
+        buf_pool.flush_list_mutex, so the predicate must gate on it
+        directly to avoid sleeping with a pending target.  The
+        matching !buf_flush_sync_lsn gate is kept for symmetry only —
+        furious buf_flush_ahead() callers always take the wake path
+        with buf_pool.flush_list_mutex serialization, so the cleaner
+        is rescued regardless.
+
+        On weakly-ordered hardware, a stale-relaxed read of
+        buf_flush_async_lsn can nonetheless let us reach this branch
+        with a pending non-furious target outstanding (on TSO every
+        atomic load sees the latest store, so the race is unobservable
+        in practice).  Rescue then comes from the next
+        mtr_t::commit_log() → buf_pool_t::page_cleaner_wakeup() under
+        buf_pool.flush_list_mutex, escalation to furious in log_close(),
+        or LRU pressure via buf_LRU_get_free_block() — every wake-side
+        path takes buf_pool.flush_list_mutex and so synchronises with
+        this thread's pre-my_cond_wait() predicate read.  The "no
+        rescue at all" case requires zero subsequent activity from any
+        thread, which means no demand for the cleaner to flush in the
+        first place. */
         my_cond_wait(&buf_pool.do_flush_list,
                      &buf_pool.flush_list_mutex.m_mutex);
       }

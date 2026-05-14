@@ -2132,6 +2132,7 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
         log_sys.set_check_for_checkpoint(true);
         /* Immediately wake up buf_flush_page_cleaner(), even when it
         is in the middle of a 1-second my_cond_timedwait(). */
+        sql_print_information("MY InnoDB: buf_flush_ahead(lsn= " LSN_PF ", furious=1)", lsn);
       wake:
         buf_pool.page_cleaner_set_idle(false);
         pthread_cond_signal(&buf_pool.do_flush_list);
@@ -2146,9 +2147,11 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
   while (cur < lsn)
     if (buf_flush_async_lsn.compare_exchange_strong(cur, lsn))
       goto bumped;
+  // sql_print_information("MY InnoDB: buf_flush_ahead(lsn= " LSN_PF ", furious=0) CAS LOSER", lsn);
   return;
 
 bumped:
+  // sql_print_information("MY InnoDB: buf_flush_ahead(lsn= " LSN_PF ", furious=0) CAS WINNER", lsn);
   /* In non-furious mode, concurrent writes to the log will remain
   possible, and we are gently requesting buf_flush_page_cleaner()
   to do more work to avoid a later call with furious=true.
@@ -2167,6 +2170,7 @@ bumped:
 
   /* Signal under buf_pool.flush_list_mutex. */
   mysql_mutex_lock(&buf_pool.flush_list_mutex);
+  sql_print_information("MY InnoDB: buf_flush_ahead(lsn= " LSN_PF ", furious=0) WAKER", lsn);
   goto wake;
 }
 
@@ -2498,8 +2502,54 @@ static void buf_flush_page_cleaner() noexcept
   lsn_t lsn_limit;
   ulint last_activity_count= srv_get_activity_count();
 
+  const ulint _t0= ut_time_ms();
+  ulint _t1= _t0;
+  ulint _dirty_blocks= UT_LIST_GET_LEN(buf_pool.flush_list);
+  ulint _tprev= _t1;
+  ulint _dirty_blocks_prev= _dirty_blocks;
+
   for (;;)
   {
+    {
+      _t1= ut_time_ms();
+      _dirty_blocks= UT_LIST_GET_LEN(buf_pool.flush_list);
+      const ulint _dt= _t1 - _tprev;
+      const int64_t _ddirty= (int64_t)(_dirty_blocks - _dirty_blocks_prev);
+      const int64_t _rate= _dt
+        ? (int64_t)(1000.0 * (double)_ddirty / (double)_dt)
+        : (int64_t)0;
+      const lsn_t _cur_lsn= log_sys.get_lsn();
+      const lsn_t _ckpt_lsn= log_sys.last_checkpoint_lsn;
+      const lsn_t _age= _cur_lsn - _ckpt_lsn;
+      const double _pct_async= log_sys.max_modified_age_async
+        ? 100.0 * (double)_age / (double)log_sys.max_modified_age_async
+        : 0.0;
+      const double _pct_max= log_sys.max_checkpoint_age
+        ? 100.0 * (double)_age / (double)log_sys.max_checkpoint_age
+        : 0.0;
+      sql_print_information(
+        "MY InnoDB: buf_flush_page_cleaner(): "
+        "%5lu ms %5lu dirty_blocks (delta: %5lu ms %5ld dirty_blocks) "
+        "[rate: %6ld dirty_blocks/s] "
+        "[ckpt_req=%d age=" LSN_PF " (%6.2f%% async, %6.2f%% max)"
+        " async=" LSN_PF " sync=" LSN_PF " idle=%d]",
+        _t1 - _t0,
+        _dirty_blocks,
+        _dt,
+        _ddirty,
+        _rate,
+        (int)log_sys.check_for_checkpoint(),
+        _age,
+        _pct_async,
+        _pct_max,
+        (lsn_t)buf_flush_async_lsn,
+        (lsn_t)buf_flush_sync_lsn,
+        (int)buf_pool.page_cleaner_idle()
+      );
+      _tprev= _t1;
+      _dirty_blocks_prev= _dirty_blocks;
+    }
+
     DBUG_EXECUTE_IF("ib_page_cleaner_sleep",
     {
       std::this_thread::sleep_for(std::chrono::seconds(1));

@@ -61,8 +61,9 @@ static constexpr ulint buf_flush_lsn_scan_factor = 3;
 /** Average redo generation rate */
 static lsn_t lsn_avg_rate = 0;
 
-/** Target oldest_modification for the page cleaner background flushing;
-writes are protected by buf_pool.flush_list_mutex */
+/** Target oldest_modification for the page cleaner background flushing.
+Bumped lock-free via monotonic-max CAS-loop from buf_flush_ahead();
+cleared under buf_pool.flush_list_mutex from buf_flush_page_cleaner(). */
 static Atomic_relaxed<lsn_t> buf_flush_async_lsn;
 /** Target oldest_modification for the page cleaner furious flushing;
 writes are protected by buf_pool.flush_list_mutex */
@@ -112,6 +113,7 @@ static void buf_flush_validate_skip() noexcept
 
 void buf_pool_t::page_cleaner_wakeup(bool for_LRU) noexcept
 {
+  mysql_mutex_assert_owner(&flush_list_mutex);
   ut_d(buf_flush_validate_skip());
   if (!page_cleaner_idle())
   {
@@ -154,7 +156,7 @@ void buf_pool_t::page_cleaner_wakeup(bool for_LRU) noexcept
                           last_activity_count == srv_get_activity_count())) ||
       srv_max_buf_pool_modified_pct <= dirty_pct)
   {
-    page_cleaner_status-= PAGE_CLEANER_IDLE;
+    page_cleaner_idle_flag= false;
     pthread_cond_signal(&do_flush_list);
   }
 }
@@ -2113,17 +2115,18 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
 
   DBUG_EXECUTE_IF("ib_log_checkpoint_avoid_hard", return;);
 
-  Atomic_relaxed<lsn_t> &limit= furious
-    ? buf_flush_sync_lsn : buf_flush_async_lsn;
-
-  if (limit < lsn)
+  if (furious)
   {
-    mysql_mutex_lock(&buf_pool.flush_list_mutex);
-    if (limit < lsn)
+    /* The furious path forces a log checkpoint via
+    log_sys.set_check_for_checkpoint(true), so the buf_flush_sync_lsn
+    bump, the checkpoint flag, and the cleaner wake must all be observed
+    together by any thread synchronising on buf_pool.flush_list_mutex. */
+    if (buf_flush_sync_lsn < lsn)
     {
-      limit= lsn;
-      if (furious)
+      mysql_mutex_lock(&buf_pool.flush_list_mutex);
+      if (buf_flush_sync_lsn < lsn)
       {
+        buf_flush_sync_lsn= lsn;
         /* Request any concurrent threads to wait for this batch to complete,
         in log_free_check(). */
         log_sys.set_check_for_checkpoint(true);
@@ -2133,16 +2136,38 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
         buf_pool.page_cleaner_set_idle(false);
         pthread_cond_signal(&buf_pool.do_flush_list);
       }
-      else if (buf_pool.page_cleaner_idle())
-        /* In non-furious mode, concurrent writes to the log will remain
-        possible, and we are gently requesting buf_flush_page_cleaner()
-        to do more work to avoid a later call with furious=true.
-        We will only wake the buf_flush_page_cleaner() from an indefinite
-        my_cond_wait(), but we will not disturb the regular 1-second sleep. */
-        goto wake;
+      mysql_mutex_unlock(&buf_pool.flush_list_mutex);
     }
-    mysql_mutex_unlock(&buf_pool.flush_list_mutex);
+    return;
   }
+
+  /* Non-furious: lock-free monotonic-max via CAS-loop. */
+  lsn_t cur= buf_flush_async_lsn;
+  while (cur < lsn)
+    if (buf_flush_async_lsn.compare_exchange_strong(cur, lsn))
+      goto bumped;
+  return;
+
+bumped:
+  /* In non-furious mode, concurrent writes to the log will remain
+  possible, and we are gently requesting buf_flush_page_cleaner()
+  to do more work to avoid a later call with furious=true.
+  We will only wake the buf_flush_page_cleaner() from an indefinite
+  my_cond_wait(), but we will not disturb the regular 1-second sleep.
+
+  To reduce contention for a gentle request case, the idle flag of
+  buf_pool is read outside of a buf_pool.flush_list_mutex critical
+  section, allowing early return.
+
+  If the decision to return early was (unlikely) wrong, subsequent
+  wake-side paths (including further buf_flush_ahead() calls under
+  redo-log pressure) are expected to perform the wake eventually. */
+  if (!buf_pool.page_cleaner_idle())
+    return;
+
+  /* Signal under buf_pool.flush_list_mutex. */
+  mysql_mutex_lock(&buf_pool.flush_list_mutex);
+  goto wake;
 }
 
 /** Conduct checkpoint-related flushing for innodb_flush_sync=ON,

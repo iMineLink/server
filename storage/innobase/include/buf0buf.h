@@ -1539,11 +1539,6 @@ private:
   Protected by flush_list_mutex. */
   unsigned page_cleaner_status;
 
-  /** Whether the page cleaner is sleeping due to being idle.
-  Writes occur under flush_list_mutex; reads are lock-free (used by
-  the early-return in buf_flush_ahead() on a busy cleaner). */
-  Atomic_relaxed<bool> page_cleaner_idle_flag;
-
   /** track server activity count for signaling idle flushing */
   ulint last_activity_count;
 public:
@@ -1585,14 +1580,6 @@ public:
     page_cleaner_status-= FLUSH_LIST_ACTIVE;
   }
 
-  /** @return whether the page cleaner must sleep due to being idle.
-  Lock-free read of page_cleaner_idle_flag; safe to call without
-  flush_list_mutex (used by the early-return in buf_flush_ahead()). */
-  bool page_cleaner_idle() const noexcept
-  {
-    return page_cleaner_idle_flag;
-  }
-
   /** @return whether the page cleaner may be initiating writes */
   bool page_cleaner_active() const noexcept
   {
@@ -1603,13 +1590,6 @@ public:
   /** Wake up the page cleaner if needed.
   @param for_LRU  whether to wake up for LRU eviction */
   void page_cleaner_wakeup(bool for_LRU= false) noexcept;
-
-  /** Register whether an explicit wakeup of the page cleaner is needed */
-  void page_cleaner_set_idle(bool deep_sleep) noexcept
-  {
-    mysql_mutex_assert_owner(&flush_list_mutex);
-    page_cleaner_idle_flag= deep_sleep;
-  }
 
   /** Update server last activity count */
   void update_last_activity_count(ulint activity_count) noexcept

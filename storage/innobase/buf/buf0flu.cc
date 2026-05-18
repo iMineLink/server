@@ -61,11 +61,104 @@ static constexpr ulint buf_flush_lsn_scan_factor = 3;
 /** Average redo generation rate */
 static lsn_t lsn_avg_rate = 0;
 
-/** Target oldest_modification for the page cleaner background flushing.
-Bumped lock-free via monotonic-max CAS-loop from buf_flush_ahead();
-cleared with CAS under buf_pool.flush_list_mutex from
-buf_flush_page_cleaner() and buf_flush_sync_for_checkpoint(). */
-static Atomic_relaxed<lsn_t> buf_flush_async_lsn;
+/** Packed async-flush target and page-cleaner idle bit.
+
+Encoded as `(target_lsn & ~IDLE_BIT) | idle_bit`, matching the existing
+log_close() convention of carrying a flag in LSN bit 0.  Bumper and
+cleaner each update both fields in a single atomic CAS, closing two
+races that the prior split-variable scheme acknowledged as
+benign-but-real:
+
+  - bumper observed page_cleaner_idle()==false right after a CAS bump
+    but before the cleaner published idle=true, leaving the target
+    unacknowledged;
+  - cleaner snapshotted target=0 at the work-decision point, a bumper
+    raised it to L after the snapshot, and the cleaner parked without
+    ever seeing L.
+
+The target LSN loses 1 byte of resolution (always rounded down to
+even), which is irrelevant for checkpoint-age comparisons.
+
+flush_list_mutex is still required for the cond_wait/cond_signal
+hand-off; it is no longer required for any state mutation. */
+class buf_flush_async_target
+{
+  static constexpr uint64_t IDLE_BIT= 1;
+  Atomic_relaxed<uint64_t> packed;
+
+public:
+  lsn_t target_lsn() const noexcept { return packed.load() & ~IDLE_BIT; }
+  bool cleaner_idle() const noexcept
+  { return (packed.load() & IDLE_BIT) != 0; }
+
+  /** Monotonic-max bump of the target LSN.  Atomically clears the idle
+  bit, since a successful bump means the cleaner has work and must not
+  remain parked.
+  @return  true iff the prior idle bit was 1 and the caller must signal
+           under flush_list_mutex to wake a parked cleaner. */
+  [[nodiscard]] bool bump(lsn_t lsn) noexcept
+  {
+    const uint64_t new_lsn= lsn & ~IDLE_BIT;
+    uint64_t cur= packed.load();
+    while ((cur & ~IDLE_BIT) < new_lsn)
+      if (packed.compare_exchange_weak(cur, new_lsn))
+        return (cur & IDLE_BIT) != 0;
+    return false;
+  }
+
+  /** Try to publish "cleaner parked", conditional on target_lsn still
+  being 0.  Failure means a bumper raced; @c lsn_out receives the new
+  target and the caller must handle it instead of parking. */
+  [[nodiscard]] bool try_park(lsn_t &lsn_out) noexcept
+  {
+    uint64_t expected= 0;
+    if (packed.compare_exchange_strong(expected, IDLE_BIT))
+      return true;
+    lsn_out= expected & ~IDLE_BIT;
+    return false;
+  }
+
+  /** Unconditionally set idle=1, preserving the target LSN.  Used when
+  the cleaner has no dirty pages: any bumped target is harmless since a
+  subsequent page_cleaner_wakeup() will clear idle once new dirty pages
+  appear. */
+  void set_idle() noexcept
+  {
+    uint64_t cur= packed.load();
+    while (!(cur & IDLE_BIT))
+      if (packed.compare_exchange_weak(cur, cur | IDLE_BIT))
+        return;
+  }
+
+  /** Clear idle=0, preserving the target LSN.  Caller must hold
+  flush_list_mutex so a subsequent cond_signal cannot race the cleaner's
+  cond_wait. */
+  void clear_idle() noexcept
+  {
+    uint64_t cur= packed.load();
+    while (cur & IDLE_BIT)
+      if (packed.compare_exchange_weak(cur, cur & ~IDLE_BIT))
+        return;
+  }
+
+  /** Clear the target LSN iff it equals @c expected, preserving idle.
+  Bumps are monotonic, so a CAS failure means a higher target was
+  written and must be preserved. */
+  void clear_target_if(lsn_t expected) noexcept
+  {
+    const uint64_t e= expected & ~IDLE_BIT;
+    uint64_t cur= packed.load();
+    for (;;)
+    {
+      if ((cur & ~IDLE_BIT) != e) return;
+      if (packed.compare_exchange_weak(cur, cur & IDLE_BIT)) return;
+    }
+  }
+
+  void reset() noexcept { packed.store(0); }
+};
+
+static buf_flush_async_target buf_flush_async;
 /** Target oldest_modification for the page cleaner furious flushing;
 writes are protected by buf_pool.flush_list_mutex */
 static Atomic_relaxed<lsn_t> buf_flush_sync_lsn;
@@ -116,7 +209,7 @@ void buf_pool_t::page_cleaner_wakeup(bool for_LRU) noexcept
 {
   mysql_mutex_assert_owner(&flush_list_mutex);
   ut_d(buf_flush_validate_skip());
-  if (!page_cleaner_idle())
+  if (!buf_flush_async.cleaner_idle())
   {
     if (for_LRU)
       /* Ensure that the page cleaner is not in a timed wait. */
@@ -157,7 +250,7 @@ void buf_pool_t::page_cleaner_wakeup(bool for_LRU) noexcept
                           last_activity_count == srv_get_activity_count())) ||
       srv_max_buf_pool_modified_pct <= dirty_pct)
   {
-    page_cleaner_idle_flag= false;
+    buf_flush_async.clear_idle();
     pthread_cond_signal(&do_flush_list);
   }
 }
@@ -2073,7 +2166,7 @@ ATTRIBUTE_COLD void buf_flush_wait(lsn_t lsn, bool checkpoint) noexcept
     wake:
       log_sys.latch.wr_unlock();
       ut_ad(buf_page_cleaner_is_active);
-      buf_pool.page_cleaner_set_idle(false);
+      buf_flush_async.clear_idle();
       pthread_cond_signal(&buf_pool.do_flush_list);
       MONITOR_INC(MONITOR_FLUSH_SYNC_WAITS);
       my_cond_wait(&buf_pool.done_flush_list,
@@ -2118,33 +2211,18 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
 
   if (!furious)
   {
-    /* Non-furious: lock-free monotonic-max via CAS-loop. */
-    lsn_t cur= buf_flush_async_lsn;
-    while (cur < lsn)
-      if (buf_flush_async_lsn.compare_exchange_weak(cur, lsn))
-        goto bumped;
-    return;
-
-  bumped:
-    /* In non-furious mode, concurrent writes to the log will remain
-    possible, and we are gently requesting buf_flush_page_cleaner()
-    to do more work to avoid a later call with furious=true.
-    We will only wake the buf_flush_page_cleaner() from an indefinite
-    my_cond_wait(), but we will not disturb the regular 1-second sleep.
-
-    To reduce contention for a gentle request case, the idle flag of
-    buf_pool is read outside of a buf_pool.flush_list_mutex critical
-    section, allowing early return.
-
-    If the decision to return early was (unlikely) wrong, subsequent
-    wake-side paths (including further buf_flush_ahead() calls under
-    redo-log pressure) are expected to perform the wake eventually. */
-    if (!buf_pool.page_cleaner_idle())
+    /* Non-furious: atomic monotonic-max bump of (target_lsn, idle=0).
+    buf_flush_async.bump() returns true iff we transitioned the idle bit
+    from 1 to 0 on a parked cleaner, in which case we must deliver the
+    cond_signal under flush_list_mutex.  The decision is now precise:
+    no "if the early-return was wrong" caveat, because the (lsn, idle)
+    pair is updated atomically. */
+    if (!buf_flush_async.bump(lsn))
       return;
-
-    /* Signal under buf_pool.flush_list_mutex. */
     mysql_mutex_lock(&buf_pool.flush_list_mutex);
-    goto wake;
+    pthread_cond_signal(&buf_pool.do_flush_list);
+    mysql_mutex_unlock(&buf_pool.flush_list_mutex);
+    return;
   }
 
   /* The furious path forces a log checkpoint via
@@ -2162,8 +2240,7 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
       log_sys.set_check_for_checkpoint(true);
       /* Immediately wake up buf_flush_page_cleaner(), even when it
       is in the middle of a 1-second my_cond_timedwait(). */
-    wake:
-      buf_pool.page_cleaner_set_idle(false);
+      buf_flush_async.clear_idle();
       pthread_cond_signal(&buf_pool.do_flush_list);
     }
     mysql_mutex_unlock(&buf_pool.flush_list_mutex);
@@ -2192,7 +2269,7 @@ static void buf_flush_sync_for_checkpoint(lsn_t lsn) noexcept
   if (buf_pool.need_LRU_eviction())
   {
     mysql_mutex_lock(&buf_pool.flush_list_mutex);
-    buf_pool.page_cleaner_set_idle(false);
+    buf_flush_async.clear_idle();
     buf_pool.n_flush_inc();
     mysql_mutex_unlock(&buf_pool.flush_list_mutex);
 
@@ -2259,9 +2336,8 @@ static void buf_flush_sync_for_checkpoint(lsn_t lsn) noexcept
     /* Same coordination as in buf_flush_page_cleaner(): clear only if
     unchanged since the snapshot, so a concurrent buf_flush_ahead() bump
     is not lost. */
-    lsn_t async= buf_flush_async_lsn;
-    if (measure >= async)
-      buf_flush_async_lsn.compare_exchange_strong(async, 0);
+    if (lsn_t async= buf_flush_async.target_lsn(); measure >= async)
+      buf_flush_async.clear_target_if(async);
   }
 
   log_sys.latch.wr_unlock();
@@ -2533,7 +2609,7 @@ static void buf_flush_page_cleaner() noexcept
       if (UNIV_UNLIKELY(srv_shutdown_state >= SRV_SHUTDOWN_LAST_PHASE))
         break;
 
-      if (buf_pool.page_cleaner_idle() &&
+      if (buf_flush_async.cleaner_idle() &&
           (!UT_LIST_GET_LEN(buf_pool.flush_list) ||
            srv_max_dirty_pages_pct_lwm == 0.0))
       {
@@ -2546,6 +2622,10 @@ static void buf_flush_page_cleaner() noexcept
         my_cond_timedwait(&buf_pool.do_flush_list,
                           &buf_pool.flush_list_mutex.m_mutex, &abstime);
     }
+    /* Canonical wake-exit point.  possibly_unemployed can leave idle=1
+    across a my_cond_timedwait timeout; clearing it here lets every
+    downstream work site assume idle=0. */
+    buf_flush_async.clear_idle();
     set_timespec(abstime, 1);
 
     lsn_limit= buf_flush_sync_lsn;
@@ -2556,8 +2636,10 @@ static void buf_flush_page_cleaner() noexcept
     fully_unemployed:
       if (srv_shutdown_state < SRV_SHUTDOWN_CLEANUP)
         buf_flush_sync_lsn= 0;
-    set_idle:
-      buf_pool.page_cleaner_set_idle(true);
+      /* No dirty pages: any pending async target is moot; park while
+      preserving it, so a future page_cleaner_wakeup() can clear idle
+      and signal when dirty pages reappear. */
+      buf_flush_async.set_idle();
     set_almost_idle:
       pthread_cond_broadcast(&buf_pool.done_flush_LRU);
       pthread_cond_broadcast(&buf_pool.done_flush_list);
@@ -2592,7 +2674,7 @@ static void buf_flush_page_cleaner() noexcept
       oldest_lsn= buf_pool.get_oldest_modification(0);
     }
 
-    lsn_t soft_lsn_limit= buf_flush_async_lsn;
+    lsn_t soft_lsn_limit= buf_flush_async.target_lsn();
 
     if (UNIV_UNLIKELY(lsn_limit != 0))
     {
@@ -2619,13 +2701,13 @@ static void buf_flush_page_cleaner() noexcept
         only clear if no concurrent thread has raised the target above
         the snapshot we observed. If the CAS fails, the bumped value
         survives and the next iteration picks it up. */
-        buf_flush_async_lsn.compare_exchange_strong(soft_lsn_limit, 0);
+        buf_flush_async.clear_target_if(soft_lsn_limit);
         soft_lsn_limit= 0;
       }
     }
     else if (buf_pool.need_LRU_eviction())
     {
-      buf_pool.page_cleaner_set_idle(false);
+      ut_ad(!buf_flush_async.cleaner_idle());
       buf_pool.n_flush_inc();
       mysql_mutex_unlock(&buf_pool.flush_list_mutex);
       n= srv_max_io_capacity;
@@ -2644,14 +2726,11 @@ static void buf_flush_page_cleaner() noexcept
       oldest_lsn= buf_pool.get_oldest_modification(0);
       if (!oldest_lsn)
         goto fully_unemployed;
-      {
-        /* Same coordination as above: clear only if unchanged since
-        the snapshot, so a concurrent buf_flush_ahead() bump is not lost. */
-        lsn_t async= buf_flush_async_lsn;
-        if (oldest_lsn >= async)
-          buf_flush_async_lsn.compare_exchange_strong(async, 0);
-      }
-      buf_pool.page_cleaner_set_idle(false);
+      /* Same coordination as above: clear only if unchanged since
+      the snapshot, so a concurrent buf_flush_ahead() bump is not lost. */
+      if (lsn_t async= buf_flush_async.target_lsn(); oldest_lsn >= async)
+        buf_flush_async.clear_target_if(async);
+      ut_ad(!buf_flush_async.cleaner_idle());
       goto set_almost_idle;
     }
     else if (UNIV_UNLIKELY(srv_shutdown_state >= SRV_SHUTDOWN_LAST_PHASE))
@@ -2672,7 +2751,7 @@ static void buf_flush_page_cleaner() noexcept
         last_activity_count= activity_count;
         goto maybe_unemployed;
       }
-      else if (buf_pool.page_cleaner_idle() && !os_aio_pending_reads())
+      else if (buf_flush_async.cleaner_idle() && !os_aio_pending_reads())
       {
         /* reaching here means 3 things:
            - last_activity_count == activity_count: suggesting server is idle
@@ -2696,18 +2775,19 @@ static void buf_flush_page_cleaner() noexcept
     }
     else if (dirty_pct < srv_max_buf_pool_modified_pct)
     possibly_unemployed:
-      /* Snapshot-based; no coordination with concurrent lock-free
-      buf_flush_ahead() bumpers. A bumper that observed
-      page_cleaner_idle()==false earlier in this iteration took its
-      early return; flipping idle=true here leaves its target
-      unacknowledged until another wake path fires. Same premise as the
-      bumper's early return: under sustained redo-log pressure,
-      subsequent buf_flush_ahead() calls observe
-      page_cleaner_idle()==true and take the wake path. */
       if (!soft_lsn_limit && !af_needed_for_redo(oldest_lsn))
-        goto set_idle;
+      {
+        /* try_park atomically publishes (idle=1, target=0).  CAS
+        failure means a bumper raced after our snapshot at the start of
+        this iteration and the new target survives — handle it instead
+        of parking with it unacknowledged. */
+        lsn_t new_lsn;
+        if (buf_flush_async.try_park(new_lsn))
+          goto set_almost_idle;
+        soft_lsn_limit= new_lsn;
+      }
 
-    buf_pool.page_cleaner_set_idle(false);
+    ut_ad(!buf_flush_async.cleaner_idle());
     buf_pool.n_flush_inc();
     mysql_mutex_unlock(&buf_pool.flush_list_mutex);
 
@@ -2745,7 +2825,7 @@ static void buf_flush_page_cleaner() noexcept
                                    MONITOR_FLUSH_ADAPTIVE_PAGES,
                                    n_flushed);
     }
-    else if (buf_flush_async_lsn <= oldest_lsn &&
+    else if (buf_flush_async.target_lsn() <= oldest_lsn &&
              !buf_pool.need_LRU_eviction())
       goto check_oldest_and_set_idle;
     else
@@ -2809,7 +2889,7 @@ ATTRIBUTE_COLD void buf_flush_page_cleaner_init() noexcept
   ut_ad(srv_operation <= SRV_OPERATION_EXPORT_RESTORED ||
         srv_operation == SRV_OPERATION_RESTORE ||
         srv_operation == SRV_OPERATION_RESTORE_EXPORT);
-  buf_flush_async_lsn= 0;
+  buf_flush_async.reset();
   buf_flush_sync_lsn= 0;
   buf_page_cleaner_is_active= true;
   std::thread(buf_flush_page_cleaner).detach();
@@ -2863,7 +2943,7 @@ ATTRIBUTE_COLD void buf_pool_t::print_flush_info() const noexcept
     "Flush ASync LSN: %" PRIu64 "\n"
     "Flush Sync  LSN: %" PRIu64 "\n"
     "-------------------",
-    lsn, clsn, buf_flush_async_lsn.load(), buf_flush_sync_lsn.load());
+    lsn, clsn, buf_flush_async.target_lsn(), buf_flush_sync_lsn.load());
 
   lsn_t age= lsn - clsn;
   lsn_t age_pct= log_sys.max_checkpoint_age

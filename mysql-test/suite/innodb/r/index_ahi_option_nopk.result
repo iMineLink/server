@@ -1,0 +1,37 @@
+#
+# MDEV-37070: Index AHI options on a table without PRIMARY KEY.
+# Exercises the def_search_info->set_enabled_fixed_mask() path in
+# innodb_ahi_enable() (ha_innodb.cc), reached only when no
+# user-defined index matches the cluster index (GEN_CLUST_INDEX).
+#
+SET @start_global_value= @@global.innodb_adaptive_hash_index;
+SET GLOBAL innodb_adaptive_hash_index= ON;
+CREATE TABLE t_nopk (
+col1 INT, col2 INT,
+INDEX idx_1 (col1) adaptive_hash_index=DEFAULT,
+INDEX idx_2 (col1, col2) adaptive_hash_index=YES,
+INDEX idx_3 (col2) adaptive_hash_index=NO
+) ENGINE=InnoDB STATS_PERSISTENT=0 adaptive_hash_index=DEFAULT;
+SHOW CREATE TABLE t_nopk;
+Table	Create Table
+t_nopk	CREATE TABLE `t_nopk` (
+  `col1` int(11) DEFAULT NULL,
+  `col2` int(11) DEFAULT NULL,
+  KEY `idx_1` (`col1`),
+  KEY `idx_2` (`col1`,`col2`) `adaptive_hash_index`=YES,
+  KEY `idx_3` (`col2`) `adaptive_hash_index`=NO
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci STATS_PERSISTENT=0
+INSERT INTO t_nopk SELECT seq, seq FROM seq_0_to_255;
+ALTER TABLE t_nopk adaptive_hash_index=OFF, ALGORITHM=INSTANT, LOCK=NONE;
+ALTER TABLE t_nopk adaptive_hash_index='ON', ALGORITHM=INSTANT, LOCK=NONE;
+SELECT COUNT(*) FROM t_nopk FORCE INDEX(idx_1) WHERE col1 >= 0 AND col1 < 256;
+COUNT(*)
+256
+SELECT COUNT(*) FROM t_nopk FORCE INDEX(idx_2) WHERE col1 = 50 AND col2 >= 0;
+COUNT(*)
+1
+SELECT COUNT(*) FROM t_nopk FORCE INDEX(idx_3) WHERE col2 = 50;
+COUNT(*)
+1
+DROP TABLE t_nopk;
+SET @@global.innodb_adaptive_hash_index= @start_global_value;

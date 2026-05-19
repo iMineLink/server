@@ -116,8 +116,10 @@ void buf_pool_t::page_cleaner_wakeup(bool for_LRU) noexcept
 {
   mysql_mutex_assert_owner(&flush_list_mutex);
   ut_d(buf_flush_validate_skip());
-  if (!page_cleaner_idle())
+  if (buf_flush_async_lsn)
   {
+    /* The cleaner already has an async target; it is either running or
+    will be serviced at the next 1Hz timedwait tick. */
     if (for_LRU)
       /* Ensure that the page cleaner is not in a timed wait. */
       pthread_cond_signal(&do_flush_list);
@@ -157,7 +159,6 @@ void buf_pool_t::page_cleaner_wakeup(bool for_LRU) noexcept
                           last_activity_count == srv_get_activity_count())) ||
       srv_max_buf_pool_modified_pct <= dirty_pct)
   {
-    page_cleaner_idle_flag= false;
     pthread_cond_signal(&do_flush_list);
   }
 }
@@ -2073,7 +2074,6 @@ ATTRIBUTE_COLD void buf_flush_wait(lsn_t lsn, bool checkpoint) noexcept
     wake:
       log_sys.latch.wr_unlock();
       ut_ad(buf_page_cleaner_is_active);
-      buf_pool.page_cleaner_set_idle(false);
       pthread_cond_signal(&buf_pool.do_flush_list);
       MONITOR_INC(MONITOR_FLUSH_SYNC_WAITS);
       my_cond_wait(&buf_pool.done_flush_list,
@@ -2126,25 +2126,17 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
     return;
 
   bumped:
-    /* In non-furious mode, concurrent writes to the log will remain
-    possible, and we are gently requesting buf_flush_page_cleaner()
-    to do more work to avoid a later call with furious=true.
-    We will only wake the buf_flush_page_cleaner() from an indefinite
-    my_cond_wait(), but we will not disturb the regular 1-second sleep.
-
-    To reduce contention for a gentle request case, the idle flag of
-    buf_pool is read outside of a buf_pool.flush_list_mutex critical
-    section, allowing early return.
-
-    If the decision to return early was (unlikely) wrong, subsequent
-    wake-side paths (including further buf_flush_ahead() calls under
-    redo-log pressure) are expected to perform the wake eventually. */
-    if (!buf_pool.page_cleaner_idle())
+    /* Signal the cleaner only on the 0 -> non-zero transition.  The
+    cleaner uses buf_flush_async_lsn == 0 as the predicate for its
+    indefinite cond_wait; once target is non-zero, the wait section
+    takes the 1-second timedwait branch, which is the designed cadence
+    of async flushing.  Subsequent bumpers therefore skip signaling. */
+    if (cur)
       return;
-
-    /* Signal under buf_pool.flush_list_mutex. */
     mysql_mutex_lock(&buf_pool.flush_list_mutex);
-    goto wake;
+    pthread_cond_signal(&buf_pool.do_flush_list);
+    mysql_mutex_unlock(&buf_pool.flush_list_mutex);
+    return;
   }
 
   /* The furious path forces a log checkpoint via
@@ -2162,8 +2154,6 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
       log_sys.set_check_for_checkpoint(true);
       /* Immediately wake up buf_flush_page_cleaner(), even when it
       is in the middle of a 1-second my_cond_timedwait(). */
-    wake:
-      buf_pool.page_cleaner_set_idle(false);
       pthread_cond_signal(&buf_pool.do_flush_list);
     }
     mysql_mutex_unlock(&buf_pool.flush_list_mutex);
@@ -2192,7 +2182,6 @@ static void buf_flush_sync_for_checkpoint(lsn_t lsn) noexcept
   if (buf_pool.need_LRU_eviction())
   {
     mysql_mutex_lock(&buf_pool.flush_list_mutex);
-    buf_pool.page_cleaner_set_idle(false);
     buf_pool.n_flush_inc();
     mysql_mutex_unlock(&buf_pool.flush_list_mutex);
 
@@ -2533,12 +2522,14 @@ static void buf_flush_page_cleaner() noexcept
       if (UNIV_UNLIKELY(srv_shutdown_state >= SRV_SHUTDOWN_LAST_PHASE))
         break;
 
-      if (buf_pool.page_cleaner_idle() &&
+      if (!buf_flush_async_lsn &&
           (!UT_LIST_GET_LEN(buf_pool.flush_list) ||
            srv_max_dirty_pages_pct_lwm == 0.0))
       {
         buf_pool.LRU_warned_clear();
-        /* We are idle; wait for buf_pool.page_cleaner_wakeup() */
+        /* No async target and no dirty pages (or adaptive flushing
+        disabled): park indefinitely until buf_flush_ahead() bumps the
+        target or buf_pool.page_cleaner_wakeup() signals us. */
         my_cond_wait(&buf_pool.do_flush_list,
                      &buf_pool.flush_list_mutex.m_mutex);
       }
@@ -2556,8 +2547,11 @@ static void buf_flush_page_cleaner() noexcept
     fully_unemployed:
       if (srv_shutdown_state < SRV_SHUTDOWN_CLEANUP)
         buf_flush_sync_lsn= 0;
-    set_idle:
-      buf_pool.page_cleaner_set_idle(true);
+      /* No dirty pages: implicitly we've reached any pending target.
+      Clear it so the wait predicate sees buf_flush_async_lsn == 0 and
+      re-enters indefinite cond_wait until a bumper or page_cleaner_wakeup()
+      signals us. */
+      buf_flush_async_lsn= 0;
     set_almost_idle:
       pthread_cond_broadcast(&buf_pool.done_flush_LRU);
       pthread_cond_broadcast(&buf_pool.done_flush_list);
@@ -2625,7 +2619,6 @@ static void buf_flush_page_cleaner() noexcept
     }
     else if (buf_pool.need_LRU_eviction())
     {
-      buf_pool.page_cleaner_set_idle(false);
       buf_pool.n_flush_inc();
       mysql_mutex_unlock(&buf_pool.flush_list_mutex);
       n= srv_max_io_capacity;
@@ -2651,7 +2644,6 @@ static void buf_flush_page_cleaner() noexcept
         if (oldest_lsn >= async)
           buf_flush_async_lsn.compare_exchange_strong(async, 0);
       }
-      buf_pool.page_cleaner_set_idle(false);
       goto set_almost_idle;
     }
     else if (UNIV_UNLIKELY(srv_shutdown_state >= SRV_SHUTDOWN_LAST_PHASE))
@@ -2672,12 +2664,12 @@ static void buf_flush_page_cleaner() noexcept
         last_activity_count= activity_count;
         goto maybe_unemployed;
       }
-      else if (buf_pool.page_cleaner_idle() && !os_aio_pending_reads())
+      else if (!buf_flush_async_lsn && !os_aio_pending_reads())
       {
         /* reaching here means 3 things:
            - last_activity_count == activity_count: suggesting server is idle
            (no trx_t::commit() activity)
-           - page cleaner is idle (dirty_pct < srv_max_dirty_pages_pct_lwm)
+           - no pending async target (dirty_pct < srv_max_dirty_pages_pct_lwm)
            - there are no pending reads but there are dirty pages to flush */
         buf_pool.update_last_activity_count(activity_count);
         buf_pool.n_flush_inc();
@@ -2696,18 +2688,14 @@ static void buf_flush_page_cleaner() noexcept
     }
     else if (dirty_pct < srv_max_buf_pool_modified_pct)
     possibly_unemployed:
-      /* Snapshot-based; no coordination with concurrent lock-free
-      buf_flush_ahead() bumpers. A bumper that observed
-      page_cleaner_idle()==false earlier in this iteration took its
-      early return; flipping idle=true here leaves its target
-      unacknowledged until another wake path fires. Same premise as the
-      bumper's early return: under sustained redo-log pressure,
-      subsequent buf_flush_ahead() calls observe
-      page_cleaner_idle()==true and take the wake path. */
+      /* If a bumper raced after our snapshot at the start of this
+      iteration, buf_flush_async_lsn is now non-zero; the next
+      wait-section pass will see it and take the timedwait(1s) branch.
+      The 1Hz cadence of async flushing services the missed target on
+      the next tick. */
       if (!soft_lsn_limit && !af_needed_for_redo(oldest_lsn))
-        goto set_idle;
+        goto set_almost_idle;
 
-    buf_pool.page_cleaner_set_idle(false);
     buf_pool.n_flush_inc();
     mysql_mutex_unlock(&buf_pool.flush_list_mutex);
 

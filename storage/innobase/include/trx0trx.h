@@ -382,11 +382,17 @@ struct trx_lock_t
 	/** List of pending trx_t::evict_table() */
 	UT_LIST_BASE_NODE_T(dict_table_t) evicted_tables;
 
-  /** number of record locks; protected by lock_sys.assert_locked(page_id) */
-  ulint n_rec_locks;
+  /** number of record locks; incremented under lock_sys.assert_locked(page_id)
+  (the per-page hash cell latch). Atomic so that concurrent
+  lock_rec_convert_impl_to_expl() on a different page does not race with the
+  trx owner thread. */
+  Atomic_counter<ulint> n_rec_locks;
   /** number of lock_rec_set_nth_bit() calls since the start of transaction;
-  protected by lock_sys.is_writer() or trx->mutex_is_owner(). */
-  ulint set_nth_bit_calls;
+  incremented under the page hash cell latch, read either under the cell latch,
+  lock_sys.is_writer(), or trx->mutex_is_owner(). Used as a version counter to
+  detect concurrent modifications of trx->lock.trx_locks during a window with
+  trx->mutex temporarily released. */
+  Atomic_counter<ulint> set_nth_bit_calls;
 };
 
 /** Logical first modification time of a table in a transaction */

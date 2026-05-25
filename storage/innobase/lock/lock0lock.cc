@@ -1947,12 +1947,15 @@ lock_rec_lock(
   if (lock_t *lock= lock_sys_t::get_first(g.cell(), id))
   {
     dberr_t err= DB_SUCCESS;
-    trx->mutex_lock();
     if (lock_rec_get_next_on_page(lock) ||
         lock->trx != trx ||
         lock->type_mode != mode ||
         lock_rec_get_n_bits(lock) <= heap_no)
     {
+      /* The "insert/wait" branch modifies trx state (trx_locks list,
+      lock_heap, wait_lock, wait_trx) and must therefore hold trx->mutex
+      in addition to the hash cell latch. */
+      trx->mutex_lock();
 
       unsigned checked_mode= (heap_no != PAGE_HEAP_NO_SUPREMUM &&
                           lock_mode_is_next_key_lock(mode))
@@ -1999,12 +2002,18 @@ lock_rec_lock(
         lock_reuse_for_next_key_lock(held_lock, mode, g.cell(), id,
                                      block->page.frame, heap_no, index, trx);
       }
+
+      trx->mutex_unlock();
     }
     else if (!impl)
     {
       /*
-        If the nth bit of the record lock is already set then we do not set
-        a new lock bit, otherwise we do set
+        The trx already owns a single record lock on this page in the
+        requested mode whose bitmap covers heap_no. Setting an additional bit
+        on a lock the trx owns is protected by the hash cell latch alone (the
+        bitmap byte is exclusive to the cell), so we do not need to acquire
+        trx->mutex on this fast path. The counters incremented by
+        lock_rec_set_nth_bit() are atomic.
       */
       if (!lock_rec_get_nth_bit(lock, heap_no))
       {
@@ -2012,7 +2021,6 @@ lock_rec_lock(
         err= DB_SUCCESS_LOCKED_REC;
       }
     }
-    trx->mutex_unlock();
     return err;
   }
 

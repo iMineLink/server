@@ -92,9 +92,11 @@ lock_rec_set_nth_bit(
 # pragma GCC diagnostic pop
 #endif
 #ifdef SUX_LOCK_GENERIC
-	ut_ad(lock_sys.is_writer() || lock->trx->mutex_is_owner());
+	ut_ad(lock_sys.is_writer() || lock->trx->mutex_is_owner()
+	      || lock_sys.is_cell_locked(*lock));
 #else
 	ut_ad(lock_sys.is_writer() || lock->trx->mutex_is_owner()
+	      || lock_sys.is_cell_locked(*lock)
 	      || (xtest() && !lock->trx->mutex_is_locked()));
 #endif
 	lock->trx->lock.n_rec_locks++;

@@ -2819,9 +2819,13 @@ static void buf_flush_page_cleaner() noexcept
       last_pages= n_flushed= buf_flush_list_holding_mutex(n);
       timespec finish;
       set_timespec(finish, 0);
+      /* abstime was captured upstream with a +1s offset (it doubles as a
+      cond_timedwait deadline). To recover the actual elapsed time we add
+      that 1000 ms back: (finish - abstime) = elapsed - 1000, so the +1000
+      cancels the offset and the sum is the true flush duration in ms. */
       page_cleaner.flush_time+=
         ulint((finish.MY_tv_sec - abstime.MY_tv_sec) * 1000 +
-              (finish.MY_tv_nsec - abstime.MY_tv_nsec) / 1000000 - 1000);
+              (finish.MY_tv_nsec - abstime.MY_tv_nsec) / 1000000 + 1000);
       MONITOR_INC_VALUE_CUMULATIVE(MONITOR_FLUSH_ADAPTIVE_TOTAL_PAGE,
                                    MONITOR_FLUSH_ADAPTIVE_COUNT,
                                    MONITOR_FLUSH_ADAPTIVE_PAGES,

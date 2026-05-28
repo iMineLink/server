@@ -1,0 +1,73 @@
+#
+# MDEV-33966: the post-commit packed page_zip_des_t::state
+# layout reserves only 9 bits (16 - N_BLOBS_SHIFT) for the n_blobs
+# field, capping it at 511. The doxygen comment alongside the field
+# states that "the maximum is 744 in a 16 KiB page", so a workload
+# that produces >= 512 external BLOB pointers on a single 16 KiB
+# ROW_FORMAT=COMPRESSED leaf must be supported.
+#
+# This test builds such a leaf and verifies it can be read back
+# intact. On a debug build with the current 9-bit field, add_n_blobs()
+# fires its ut_ad as soon as the count crosses 511; on release the
+# count silently wraps modulo 512 and the on-page BLOB-pointer trailer
+# becomes inconsistent with the actual record count, which CHECK TABLE
+# is expected to surface.
+#
+# Until the field is widened to at least 10 bits this test is expected
+# to fail.
+#
+
+--source include/have_innodb.inc
+--source include/have_innodb_16k.inc
+--source include/not_embedded.inc
+
+SET @save_strict = @@global.innodb_strict_mode;
+SET @save_ro_zip = @@global.innodb_read_only_compressed;
+SET @@global.innodb_strict_mode         = OFF;
+SET @@global.innodb_read_only_compressed = OFF;
+
+# Build a wide BLOB-only schema. Each LONGBLOB column contributes one
+# off-page pointer per row whenever its value exceeds the 767-byte
+# inline threshold. Each external reference is 20 bytes in the record
+# body, so a single row is bounded to ~400 columns by the half-page
+# row-size rule. Several rows packed on one 16 KiB compressed leaf
+# multiply the count past 511.
+
+--disable_query_log
+let $cols = 350;
+let $rows = 2;
+let $col_defs = ;
+let $i = 1;
+while ($i <= $cols) {
+  let $col_defs = $col_defs , `b$i` LONGBLOB;
+  inc $i;
+}
+eval CREATE TABLE big_blobs (id INT PRIMARY KEY $col_defs)
+  ENGINE=InnoDB ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=16;
+--enable_query_log
+
+# Insert $rows rows; each row's $cols LONGBLOBs all spill off-page.
+# Expected aggregate on the holding leaf: $cols * $rows = 600 pointers,
+# crossing the 9-bit (max 511) field cap.
+
+--disable_query_log
+let $vals = ;
+let $j = 1;
+while ($j <= $cols) {
+  let $vals = $vals, REPEAT('x', 800);
+  inc $j;
+}
+let $r = 1;
+while ($r <= $rows) {
+  eval INSERT INTO big_blobs VALUES ($r $vals);
+  inc $r;
+}
+--enable_query_log
+
+SELECT COUNT(*) FROM big_blobs;
+CHECK TABLE big_blobs;
+
+DROP TABLE big_blobs;
+
+SET @@global.innodb_strict_mode          = @save_strict;
+SET @@global.innodb_read_only_compressed = @save_ro_zip;

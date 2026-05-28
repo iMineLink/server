@@ -103,6 +103,10 @@ struct page_zip_des_t
 private:
   /** ROW_FORMAT=COMPRESSED page size (0=not compressed) */
   static constexpr unsigned SSIZE_BITS= PAGE_ZIP_SSIZE_BITS;
+  /** state flag: whether the block has ever been promoted to the "young"
+  end of buf_pool.LRU during the current residency. Sticky for the lifetime
+  of the descriptor; cleared by clear() on (re)init. */
+  static constexpr unsigned PROMOTED= SSIZE_BITS;
   /** state flag: whether the modification log is empty */
   static constexpr unsigned NONEMPTY= SSIZE_BITS + 1;
   /** state flag: whether the block has been accessed recently */
@@ -156,6 +160,12 @@ public:
   static bool old(uint16_t state) { return state & 1U << OLD; }
   bool old() const { return old(get_state()); }
   template<bool old> void set_old() { if (old) set<OLD>(); else reset<OLD>(); }
+
+  /** @return whether the block has ever been promoted to the "young"
+  end of buf_pool.LRU during this residency */
+  static bool is_promoted(uint16_t state) { return state & 1U << PROMOTED; }
+  bool is_promoted() const { return is_promoted(get_state()); }
+  void set_promoted() { set<PROMOTED>(); }
 
   /** number of number of externally stored columns;
   the maximum is 744 in a 16 KiB page */

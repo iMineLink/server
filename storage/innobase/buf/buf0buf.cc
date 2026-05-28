@@ -3128,7 +3128,9 @@ bool buf_page_t::set_accessed() noexcept
 #endif /* SAFE_MUTEX */
   if (access_time)
     return true;
-  access_time= uint16_t(time(nullptr));
+  /* CLOCK_MONOTONIC (via my_interval_timer()) keeps the LRU probation
+  heuristic immune to wall-clock jumps and NTP adjustments. */
+  access_time= uint16_t(my_interval_timer() / 1000000000ULL);
   return false;
 }
 

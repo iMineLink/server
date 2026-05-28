@@ -1264,18 +1264,27 @@ void buf_page_t::make_young(uint16_t tm) noexcept
   mysql_mutex_assert_owner(&buf_pool.mutex);
   ut_ad(in_file());
 
-  if (!tm || !is_old());
-  else if (tm >= access_time)
+  if (!is_old())
+    return;
+
+  /* tm == 0 means innodb_old_blocks_time is disabled: zero ms of probation
+  is trivially satisfied, so promote on the first observed access. Once a
+  block has been promoted in this residency (zip.is_promoted()), subsequent
+  fall-backs into LRU_old re-promote on the first access without re-earning
+  the probation -- restoring pre-MDEV-33966 behavior for already-validated
+  hot blocks. The tm >= access_time arm still gates first-time promotion. */
+  if (tm && !zip.is_promoted() && tm < access_time)
   {
-    /* Note: access_time wraps around in only 65536 seconds or 18.2 hours.
-    Let us zero out the access_time here, so that the next flag_accessed()
-    will set a new access time. In that way, a frequently accessed block
-    should be less likely to be a victim of LRU eviction. */
-    access_time= 0;
-    buf_page_make_young(this);
-  }
-  else
     buf_pool.stat.n_pages_not_made_young++;
+    return;
+  }
+
+  /* Note: access_time wraps around in only 65536 seconds or 18.2 hours.
+  Zero it here so the next flag_accessed() will set a new access time and
+  the wrap cannot misclassify a frequently accessed block as "too new". */
+  access_time= 0;
+  zip.set_promoted();
+  buf_page_make_young(this);
 }
 
 /** Adjust to_withdraw during buf_pool_t::shrink() */
@@ -1324,8 +1333,11 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
   page less than 5% of BP. */
   const size_t buf_lru_min_len=
     std::min((buf_pool.usable_size()) / 20 - 1, size_t{BUF_LRU_MIN_LEN});
+  /* CLOCK_MONOTONIC (via my_interval_timer()) avoids the NTP/wall-clock
+  jumps that uint16_t(time(nullptr)) would expose this heuristic to. */
   const uint16_t tm= buf_pool.LRU_old_time_threshold
-    ? uint16_t(time(nullptr) - buf_pool.LRU_old_time_threshold / 1000)
+    ? uint16_t(my_interval_timer() / 1000000000ULL -
+               buf_pool.LRU_old_time_threshold / 1000)
     : 0;
 
   for (buf_page_t *bpage= UT_LIST_GET_LAST(buf_pool.LRU);
@@ -1515,8 +1527,11 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
   static_assert(FIL_NULL > SRV_TMP_SPACE_ID, "consistency");
   static_assert(FIL_NULL > SRV_SPACE_ID_UPPER_BOUND, "consistency");
 
+  /* CLOCK_MONOTONIC (via my_interval_timer()) avoids the NTP/wall-clock
+  jumps that uint16_t(time(nullptr)) would expose this heuristic to. */
   const uint16_t tm= buf_pool.LRU_old_time_threshold
-    ? uint16_t(time(nullptr) - buf_pool.LRU_old_time_threshold / 1000)
+    ? uint16_t(my_interval_timer() / 1000000000ULL -
+               buf_pool.LRU_old_time_threshold / 1000)
     : 0;
 
   /* Start from the end of the list looking for a suitable block to be

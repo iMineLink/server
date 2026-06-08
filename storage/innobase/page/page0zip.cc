@@ -1237,20 +1237,18 @@ func_exit:
 
 inline void page_zip_des_t::set_n_blobs_and_empty(ulint n_blobs)
 {
-  ut_ad(n_blobs < 1U << (16 - N_BLOBS_SHIFT));
+  ut_ad(n_blobs < 1U << (32 - N_BLOBS_SHIFT));
   /* Atomic compare-exchange: a snapshot-then-fetch_add approach would let
   arithmetic carries from the NONEMPTY bit propagate through ACCESSED/OLD
   (set concurrently by other threads holding only a buffer fix) into the
   n_blobs field, silently corrupting those flags. CAS rewrites the masked
   bits and preserves everything else atomically. */
-  constexpr uint16_t preserve_mask=
-    uint16_t(~((1U << NONEMPTY) |
-               (((1U << (16 - N_BLOBS_SHIFT)) - 1) << N_BLOBS_SHIFT)));
-  const uint16_t target_high= uint16_t(n_blobs << N_BLOBS_SHIFT);
-  uint16_t cur= state.load(std::memory_order_relaxed);
-  while (!state.compare_exchange_weak(cur,
-                                      uint16_t((cur & preserve_mask) |
-                                               target_high),
+  constexpr uint32_t preserve_mask=
+    ~((1U << NONEMPTY) |
+      (((1U << (32 - N_BLOBS_SHIFT)) - 1) << N_BLOBS_SHIFT));
+  const uint32_t target_high= uint32_t(n_blobs << N_BLOBS_SHIFT);
+  uint32_t cur= state.load(std::memory_order_relaxed);
+  while (!state.compare_exchange_weak(cur, (cur & preserve_mask) | target_high,
                                       std::memory_order_relaxed,
                                       std::memory_order_relaxed))
   {}

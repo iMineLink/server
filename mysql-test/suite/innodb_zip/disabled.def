@@ -1,1 +1,0 @@
-n_blobs_overflow : MDEV-33966 - page_zip_des_t::n_blobs is currently capped at 9 bits (511); the test reproduces an assertion in add_n_blobs() until the field is widened to >= 10 bits.

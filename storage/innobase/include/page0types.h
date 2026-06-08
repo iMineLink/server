@@ -113,8 +113,9 @@ private:
   static constexpr unsigned ACCESSED= SSIZE_BITS + 2;
   /** state flag: whether the block is part of buf_pool.LRU_old */
   static constexpr unsigned OLD= SSIZE_BITS + 3;
-  /** state component: number of number of externally stored columns;
-  the maximum is 744 in a 16 KiB page */
+  /** state component: number of externally stored columns; the maximum is
+  744 in a 16 KiB page. Occupies bits N_BLOBS_SHIFT..31 of the 32-bit state,
+  so it can hold any realistic count without overflow. */
   static constexpr unsigned N_BLOBS_SHIFT= SSIZE_BITS + 4;
 
   template<unsigned bit> bool test_and_reset()
@@ -129,7 +130,7 @@ private:
 
     Luckily, GCC 7 is currently the oldest in currently supported GNU/Linux
     distributions. Also, FreeBSD 14 ships with clang 16. */
-    return state.fetch_and(uint16_t(~(1U << bit)), std::memory_order_relaxed) &
+    return state.fetch_and(~(1U << bit), std::memory_order_relaxed) &
       (1U << bit);
 #endif
   }
@@ -141,47 +142,47 @@ private:
   template<unsigned bit> void reset()
   {
     /* On 80386, this translates into LOCK AND or LOCK BTR */
-    state.fetch_and(uint16_t(~(1U << bit)), std::memory_order_relaxed);
+    state.fetch_and(~(1U << bit), std::memory_order_relaxed);
   }
 
 public:
-  uint16_t get_state() const { return state.load(std::memory_order_relaxed); }
+  uint32_t get_state() const { return state.load(std::memory_order_relaxed); }
 
-  static bool is_nonempty(uint16_t state) { return state & 1U << NONEMPTY; }
+  static bool is_nonempty(uint32_t state) { return state & 1U << NONEMPTY; }
   bool is_nonempty() const { return is_nonempty(get_state()); }
   void set_nonempty() { set<NONEMPTY>(); }
 
-  static bool is_accessed(uint16_t state) { return state & 1U << ACCESSED; }
+  static bool is_accessed(uint32_t state) { return state & 1U << ACCESSED; }
   bool is_accessed() const { return is_accessed(get_state()); }
   void set_accessed() { set<ACCESSED>(); }
   bool was_accessed() { return test_and_reset<ACCESSED>(); }
 
   /** @return whether the block is part of buf_pool.LRU_old */
-  static bool old(uint16_t state) { return state & 1U << OLD; }
+  static bool old(uint32_t state) { return state & 1U << OLD; }
   bool old() const { return old(get_state()); }
   template<bool old> void set_old() { if (old) set<OLD>(); else reset<OLD>(); }
 
   /** @return whether the block has ever been promoted to the "young"
   end of buf_pool.LRU during this residency */
-  static bool is_promoted(uint16_t state) { return state & 1U << PROMOTED; }
+  static bool is_promoted(uint32_t state) { return state & 1U << PROMOTED; }
   bool is_promoted() const { return is_promoted(get_state()); }
   void set_promoted() { set<PROMOTED>(); }
 
-  /** number of number of externally stored columns;
-  the maximum is 744 in a 16 KiB page */
-  static uint16_t n_blobs(uint16_t state)
+  /** number of externally stored columns; the maximum is 744 in a 16 KiB
+  page */
+  static uint16_t n_blobs(uint32_t state)
   { return uint16_t(state >> N_BLOBS_SHIFT); }
   uint16_t n_blobs() const { return n_blobs(get_state()); }
   void add_n_blobs(ulint n)
   {
-    ut_d(uint16_t s=)
-    state.fetch_add(uint16_t(n << N_BLOBS_SHIFT), std::memory_order_relaxed);
-    ut_ad(n + n_blobs(s) < 1U << (16 - N_BLOBS_SHIFT));
+    ut_d(uint32_t s=)
+    state.fetch_add(uint32_t(n << N_BLOBS_SHIFT), std::memory_order_relaxed);
+    ut_ad(n + n_blobs(s) < 1U << (32 - N_BLOBS_SHIFT));
   }
   void sub_n_blobs(ulint n)
   {
-    ut_d(uint16_t s=)
-    state.fetch_sub(uint16_t(n << N_BLOBS_SHIFT), std::memory_order_relaxed);
+    ut_d(uint32_t s=)
+    state.fetch_sub(uint32_t(n << N_BLOBS_SHIFT), std::memory_order_relaxed);
     ut_ad(n_blobs(s) >= n);
   }
 
@@ -190,7 +191,7 @@ public:
 
   /** @return ROW_FORMAT=COMPRESSED page shift size
   @retval 0 if the page is not in ROW_FORMAT=COMPRESSED */
-  static uint16_t ssize(uint16_t state)
+  static uint16_t ssize(uint32_t state)
   { return state & ((1U << SSIZE_BITS) - 1); }
   uint16_t ssize() const { return ssize(get_state()); }
 
@@ -233,8 +234,9 @@ public:
 private:
   friend buf_pool_t;
   friend buf_page_t;
-  /** page descriptor state */
-  Atomic_relaxed<uint16_t> state;
+  /** page descriptor state: ssize, the PROMOTED/NONEMPTY/ACCESSED/OLD flags,
+  and the n_blobs count, all packed into one atomic word */
+  Atomic_relaxed<uint32_t> state;
   /** fix count and state used in buf_page_t */
   Atomic_relaxed<uint32_t> fix;
 };

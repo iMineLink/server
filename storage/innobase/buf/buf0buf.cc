@@ -3124,6 +3124,46 @@ bool buf_page_t::flag_accessed() noexcept
   return set_accessed();
 }
 
+#if BUF_LRU_POLICY != BUF_LRU_TIME
+/* The BUF_LRU_TIME definitions are inline at the end of buf0buf.h (they need
+buf_pool_t to be complete). Note that buf_page_make_young() increments
+buf_pool.stat.n_pages_made_young itself, so these must not bump it again. */
+buf_page_t::lru_visit_t buf_page_t::lru_visit(uint16_t tm) noexcept
+{
+  mysql_mutex_assert_owner(&buf_pool.mutex);
+  ut_ad(in_file());
+# if BUF_LRU_POLICY == BUF_LRU_SWEEP_FREQ
+  if (zip.was_accessed())                  /* touched since the last visit */
+  {
+    if (zip.inc_usage() >= BUF_LRU_PROMOTE_THRESHOLD && is_old())
+      buf_page_make_young(this);
+    return LRU_KEPT;
+  }
+  return zip.dec_usage() ? LRU_KEPT : LRU_EVICTABLE;   /* age; evict at 0 */
+# else /* BUF_LRU_ACCESS_FREQ: the access path already counted the touches */
+  const unsigned u= zip.dec_usage();       /* age on each sweep visit */
+  if (!u)
+    return LRU_EVICTABLE;
+  if (u >= BUF_LRU_PROMOTE_THRESHOLD && is_old())
+    buf_page_make_young(this);
+  return LRU_KEPT;
+# endif
+}
+
+void buf_page_t::lru_visit_flush(uint16_t tm) noexcept
+{
+  mysql_mutex_assert_owner(&buf_pool.mutex);
+# if BUF_LRU_POLICY == BUF_LRU_SWEEP_FREQ
+  if (zip.was_accessed() && zip.inc_usage() >= BUF_LRU_PROMOTE_THRESHOLD &&
+      is_old())
+    buf_page_make_young(this);
+# else /* BUF_LRU_ACCESS_FREQ */
+  if (zip.usage() >= BUF_LRU_PROMOTE_THRESHOLD && is_old())
+    buf_page_make_young(this);
+# endif
+}
+#endif
+
 bool buf_page_t::set_accessed() noexcept
 {
   ut_ad(in_file());

@@ -427,6 +427,27 @@ public:
   }
 };
 
+/** @name Buffer pool LRU promotion signal (experimental)
+The default BUF_LRU_TIME is the shipped time-based behavior (access_time plus
+innodb_old_blocks_time). The frequency-based alternatives are kept for
+evaluation. Each policy lives on its own commit whose only difference is the
+BUF_LRU_POLICY definition below, so building a variant is a checkout rather
+than a CMake option. All policy divergence is confined to
+buf_page_t::flag_accessed_only(), buf_page_t::zip_accessed_recently(), and
+buf_page_t::lru_visit()/lru_visit_flush() in buf0buf.cc, so deleting the
+losers later is local. */
+/* @{ */
+#define BUF_LRU_TIME        0  /*!< time-based promotion (default, as shipped) */
+#define BUF_LRU_SWEEP_FREQ  1  /*!< usage counter aged by the eviction sweep */
+#define BUF_LRU_ACCESS_FREQ 2  /*!< usage counter incremented on each access */
+#define BUF_LRU_POLICY BUF_LRU_TIME
+#if BUF_LRU_POLICY != BUF_LRU_TIME
+/** Minimum page_zip_des_t::usage() at which a block in buf_pool.LRU_old is
+promoted to the "young" end under a frequency-based policy. */
+# define BUF_LRU_PROMOTE_THRESHOLD 2
+#endif
+/* @} */
+
 /** The common buffer control block structure
 for compressed and uncompressed frames */
 
@@ -834,7 +855,26 @@ public:
 
   /** Mark a block recently accessed, without updating access_time
   (when we do not want to trigger read-ahead) */
-  void flag_accessed_only() noexcept { zip.set_accessed(); }
+  void flag_accessed_only() noexcept
+  {
+#if BUF_LRU_POLICY == BUF_LRU_ACCESS_FREQ
+    zip.inc_usage();
+#else
+    zip.set_accessed();
+#endif
+  }
+
+  /** @param zip_state  a snapshot of a block's page_zip_des_t state
+  @return whether the block counts as recently accessed for the read-ahead
+  heuristics under the active LRU policy */
+  static bool zip_accessed_recently(uint32_t zip_state) noexcept
+  {
+#if BUF_LRU_POLICY == BUF_LRU_ACCESS_FREQ
+    return page_zip_des_t::usage(zip_state) != 0;
+#else
+    return page_zip_des_t::is_accessed(zip_state);
+#endif
+  }
 
   /** Mark the block as accessed
   @return whether set_accessed() or flag_accessed() had already been invoked
@@ -849,6 +889,21 @@ public:
   /** Clear flag_accessed_only() during a batch
   @param tm  is_accessed() threshold */
   void make_young(uint16_t tm) noexcept;
+
+  /** Verdict of lru_visit(): whether the eviction sweep may evict the block. */
+  enum lru_visit_t { LRU_KEPT, LRU_EVICTABLE };
+
+  /** Process the block as the eviction / LRU-flush sweep reaches it: age the
+  LRU signal and, if the block qualifies, promote it to the "young" end.
+  @param tm  is_accessed() threshold (used only by BUF_LRU_TIME)
+  @return whether the block may now be evicted */
+  lru_visit_t lru_visit(uint16_t tm) noexcept;
+
+  /** Process the block as the flush_list (LSN-ordered) batch reaches it:
+  promote it if the LRU signal says it is hot, but do not age it (that batch
+  is not an eviction sweep).
+  @param tm  is_accessed() threshold (used only by BUF_LRU_TIME) */
+  void lru_visit_flush(uint16_t tm) noexcept;
 };
 
 /** The buffer control block structure */
@@ -1942,6 +1997,29 @@ inline void buf_page_t::invalidate() noexcept
   if (!++modify_clock_low)
     modify_clock_high++;
 }
+
+#if BUF_LRU_POLICY == BUF_LRU_TIME
+/* Defined here (not in buf0buf.cc) so the default eviction sweep keeps the
+inline "was_accessed()" fast path it had before lru_visit() existed. The
+frequency policies define these out-of-line in buf0buf.cc because they call
+the free function buf_page_make_young(), which buf0buf.h does not declare. */
+inline buf_page_t::lru_visit_t buf_page_t::lru_visit(uint16_t tm) noexcept
+{
+  mysql_mutex_assert_owner(&buf_pool.mutex);
+  ut_ad(in_file());
+  if (!zip.was_accessed())
+    return LRU_EVICTABLE;
+  make_young(tm);                          /* updates the made/not-made stats */
+  return LRU_KEPT;
+}
+
+inline void buf_page_t::lru_visit_flush(uint16_t tm) noexcept
+{
+  mysql_mutex_assert_owner(&buf_pool.mutex);
+  if (zip.was_accessed())
+    make_young(tm);
+}
+#endif
 
 /**********************************************************************
 Let us list the consistency conditions for different control block states.

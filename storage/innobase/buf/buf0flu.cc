@@ -1351,11 +1351,8 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
     buf_page_t *prev= UT_LIST_GET_PREV(LRU, bpage);
     buf_pool.lru_hp.set(prev);
 
-    if (bpage->zip.was_accessed())
-    {
-      bpage->make_young(tm);
+    if (bpage->lru_visit(tm) == buf_page_t::LRU_KEPT)
       continue;
-    }
 
     auto state= bpage->state();
     ut_ad(state >= buf_page_t::FREED);
@@ -1546,8 +1543,7 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
       break;
     ut_ad(bpage->in_file());
 
-    if (bpage->zip.was_accessed())
-      bpage->make_young(tm);
+    bpage->lru_visit_flush(tm);
 
     {
       buf_page_t *prev= UT_LIST_GET_PREV(list, bpage);

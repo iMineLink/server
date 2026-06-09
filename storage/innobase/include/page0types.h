@@ -113,10 +113,19 @@ private:
   static constexpr unsigned ACCESSED= SSIZE_BITS + 2;
   /** state flag: whether the block is part of buf_pool.LRU_old */
   static constexpr unsigned OLD= SSIZE_BITS + 3;
+  /** state component: GCLOCK-style usage counter, consulted only by the
+  experimental frequency-based LRU policies (see BUF_LRU_POLICY); unused by
+  the default time-based policy. Placed below the n_blobs field so that
+  n_blobs fetch_add() carries fall off bit 31 without reaching it, and so
+  that inc_usage()/dec_usage() (which saturate before carrying) cannot
+  disturb n_blobs. */
+  static constexpr unsigned USAGE_SHIFT= SSIZE_BITS + 4;
+  static constexpr unsigned USAGE_BITS= 3;
+  static constexpr unsigned USAGE_MAX= (1U << USAGE_BITS) - 1;
   /** state component: number of externally stored columns; the maximum is
   744 in a 16 KiB page. Occupies bits N_BLOBS_SHIFT..31 of the 32-bit state,
   so it can hold any realistic count without overflow. */
-  static constexpr unsigned N_BLOBS_SHIFT= SSIZE_BITS + 4;
+  static constexpr unsigned N_BLOBS_SHIFT= USAGE_SHIFT + USAGE_BITS;
 
   template<unsigned bit> bool test_and_reset()
   {
@@ -167,6 +176,45 @@ public:
   static bool is_promoted(uint32_t state) { return state & 1U << PROMOTED; }
   bool is_promoted() const { return is_promoted(get_state()); }
   void set_promoted() { set<PROMOTED>(); }
+
+  /** @return the GCLOCK usage counter (experimental LRU policies) */
+  static unsigned usage(uint32_t state)
+  { return (state >> USAGE_SHIFT) & USAGE_MAX; }
+  unsigned usage() const { return usage(get_state()); }
+  /** Saturating increment of usage(). Returns once at USAGE_MAX with a plain
+  load (no RMW); below it the saturation guard prevents a carry into n_blobs.
+  @return the new usage() value */
+  unsigned inc_usage()
+  {
+    uint32_t cur= state.load(std::memory_order_relaxed);
+    for (;;)
+    {
+      const unsigned u= (cur >> USAGE_SHIFT) & USAGE_MAX;
+      if (u == USAGE_MAX)
+        return u;
+      if (state.compare_exchange_weak(cur, cur + (1U << USAGE_SHIFT),
+                                      std::memory_order_relaxed,
+                                      std::memory_order_relaxed))
+        return u + 1;
+    }
+  }
+  /** Saturating decrement of usage(). The floor-at-0 guard prevents a borrow
+  from n_blobs.
+  @return the new usage() value */
+  unsigned dec_usage()
+  {
+    uint32_t cur= state.load(std::memory_order_relaxed);
+    for (;;)
+    {
+      const unsigned u= (cur >> USAGE_SHIFT) & USAGE_MAX;
+      if (u == 0)
+        return 0;
+      if (state.compare_exchange_weak(cur, cur - (1U << USAGE_SHIFT),
+                                      std::memory_order_relaxed,
+                                      std::memory_order_relaxed))
+        return u - 1;
+    }
+  }
 
   /** number of externally stored columns; the maximum is 744 in a 16 KiB
   page */

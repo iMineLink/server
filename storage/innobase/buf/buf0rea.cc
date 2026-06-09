@@ -458,7 +458,7 @@ ulint buf_read_ahead_random(const page_id_t page_id) noexcept
     if (const buf_page_t *bpage= buf_pool.page_hash.get(i, chain))
     {
       const auto state= bpage->zip.get_state();
-      if ((bpage->zip.is_accessed(state) ||
+      if ((buf_page_t::zip_accessed_recently(state) ||
            (!bpage->zip.old(state) && bpage->is_accessed())) &&
           !--count)
         goto read_ahead;

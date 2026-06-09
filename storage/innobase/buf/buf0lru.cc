@@ -193,9 +193,7 @@ static bool buf_LRU_free_from_unzip_LRU_list(ulint limit, uint16_t tm)
 		ut_ad(block->in_unzip_LRU_list);
 		ut_ad(block->page.in_LRU_list);
 
-		if (block->page.zip.was_accessed()) {
-			block->page.make_young(tm);
-		} else {
+		if (block->page.lru_visit(tm) == buf_page_t::LRU_EVICTABLE) {
 			freed = buf_LRU_free_page(&block->page, false);
 			if (freed) {
 				scanned++;
@@ -234,8 +232,7 @@ static bool buf_LRU_free_from_common_LRU_list(ulint limit, uint16_t tm)
 		buf_page_t*	prev = UT_LIST_GET_PREV(LRU, bpage);
 		buf_pool.lru_scan_itr.set(prev);
 
-		if (bpage->zip.was_accessed()) {
-			bpage->make_young(tm);
+		if (bpage->lru_visit(tm) == buf_page_t::LRU_KEPT) {
 			continue;
 		}
 

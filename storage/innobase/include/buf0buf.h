@@ -440,7 +440,7 @@ losers later is local. */
 #define BUF_LRU_TIME        0  /*!< time-based promotion (default, as shipped) */
 #define BUF_LRU_SWEEP_FREQ  1  /*!< usage counter aged by the eviction sweep */
 #define BUF_LRU_ACCESS_FREQ 2  /*!< usage counter incremented on each access */
-#define BUF_LRU_POLICY BUF_LRU_SWEEP_FREQ
+#define BUF_LRU_POLICY BUF_LRU_ACCESS_FREQ
 #if BUF_LRU_POLICY != BUF_LRU_TIME
 /** Minimum page_zip_des_t::usage() at which a block in buf_pool.LRU_old is
 promoted to the "young" end under a frequency-based policy. */

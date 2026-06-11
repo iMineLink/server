@@ -949,6 +949,7 @@ buf_LRU_block_free_non_file_page(
 /*=============================*/
 	buf_block_t*	block)	/*!< in: block, must not contain a file page */
 {
+	mysql_mutex_assert_owner(&buf_pool.mutex);
 	void*		data;
 
 	ut_ad(block->page.state() == buf_page_t::MEMORY);
@@ -978,7 +979,8 @@ buf_LRU_block_free_non_file_page(
 		UT_LIST_ADD_FIRST(buf_pool.free, &block->page);
 		ut_d(block->page.in_free_list = true);
 		buf_pool.try_LRU_scan= true;
-		pthread_cond_broadcast(&buf_pool.done_free);
+		/* One freed block can satisfy at most one waiter */
+		pthread_cond_signal(&buf_pool.done_free);
 	}
 
 	block->page.set_os_unused();

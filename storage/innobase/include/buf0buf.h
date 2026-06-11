@@ -1629,6 +1629,8 @@ public:
 					mutex or latch */
   /** Cleared when buf_LRU_get_free_block() fails.
   Set whenever the free list grows, along with a broadcast of done_free.
+  Signal rather than broadcast is used instead in
+  buf_LRU_block_free_non_file_page().
   Protected by buf_pool.mutex. */
   Atomic_relaxed<bool> try_LRU_scan;
 
@@ -1658,6 +1660,8 @@ public:
   UT_LIST_BASE_NODE_T(buf_page_t) free;
 
   /** broadcast each time when the free list grows or try_LRU_scan is set;
+  signal rather than broadcast is used when a single block is freed in
+  buf_LRU_block_free_non_file_page();
   protected by mutex */
   pthread_cond_t done_free;
 

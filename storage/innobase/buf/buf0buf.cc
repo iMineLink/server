@@ -2388,6 +2388,11 @@ buf_page_t *buf_page_get_zip(const page_id_t page_id) noexcept
     bpage= nullptr;
   }
   else
+    /* TODO: this only stamps access_time; unlike the latched get paths it
+    does not flag_accessed() (set the page_zip_des_t ACCESSED bit), so a block
+    reached only through buf_page_get_zip() is never promoted to the "young"
+    end by the eviction sweep. Consider flag_accessed() here if
+    ROW_FORMAT=COMPRESSED-only access should keep a block resident. */
     bpage->set_accessed();
 
 #ifdef UNIV_DEBUG

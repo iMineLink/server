@@ -1260,8 +1260,11 @@ static bool buf_LRU_scan_and_free_block(ulint limit)
 {
   mysql_mutex_assert_owner(&buf_pool.mutex);
 
+  /* CLOCK_MONOTONIC (via my_interval_timer()) avoids the NTP/wall-clock
+  jumps that uint16_t(time(nullptr)) would expose this heuristic to. */
   const uint16_t tm= buf_pool.LRU_old_time_threshold
-    ? uint16_t(time(nullptr) - buf_pool.LRU_old_time_threshold / 1000)
+    ? uint16_t(my_interval_timer() / 1000000000ULL -
+               buf_pool.LRU_old_time_threshold / 1000)
     : 0;
 
   return buf_LRU_free_from_unzip_LRU_list(limit, tm) ||

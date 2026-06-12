@@ -834,7 +834,8 @@ public:
   inline bool is_old() const noexcept;
   /** Set whether a block is old in buf_pool.LRU */
   template<bool old> inline void set_old() noexcept;
-  /** @return uint16_t(time(nullptr)) of first access of a block in buf_pool
+  /** @return uint16_t(my_interval_timer() / 1e9) of first access of a
+  block in buf_pool
   @retval 0 if not accessed */
   inline uint16_t is_accessed() const noexcept { return access_time; }
 

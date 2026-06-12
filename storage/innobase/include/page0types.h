@@ -104,14 +104,15 @@ private:
   /** ROW_FORMAT=COMPRESSED page size (0=not compressed) */
   static constexpr unsigned SSIZE_BITS= PAGE_ZIP_SSIZE_BITS;
   /** state flag: whether the modification log is empty */
-  static constexpr unsigned NONEMPTY= SSIZE_BITS + 1;
+  static constexpr unsigned NONEMPTY= SSIZE_BITS;
   /** state flag: whether the block has been accessed recently */
-  static constexpr unsigned ACCESSED= SSIZE_BITS + 2;
+  static constexpr unsigned ACCESSED= SSIZE_BITS + 1;
   /** state flag: whether the block is part of buf_pool.LRU_old */
-  static constexpr unsigned OLD= SSIZE_BITS + 3;
-  /** state component: number of number of externally stored columns;
-  the maximum is 744 in a 16 KiB page */
-  static constexpr unsigned N_BLOBS_SHIFT= SSIZE_BITS + 4;
+  static constexpr unsigned OLD= SSIZE_BITS + 2;
+  /** state component: number of externally stored columns; the maximum is
+  744 in a 16 KiB page. Occupies bits N_BLOBS_SHIFT..15 of the 16-bit state
+  (10 bits), enough to hold that maximum without overflow. */
+  static constexpr unsigned N_BLOBS_SHIFT= SSIZE_BITS + 3;
 
   template<unsigned bit> bool test_and_reset()
   {
@@ -132,7 +133,7 @@ private:
   template<unsigned bit> void set()
   {
     /* On 80386, this translates into LOCK OR or LOCK BTS */
-    state.fetch_or(1U << bit, std::memory_order_relaxed);
+    state.fetch_or(uint16_t(1U << bit), std::memory_order_relaxed);
   }
   template<unsigned bit> void reset()
   {
@@ -157,8 +158,8 @@ public:
   bool old() const { return old(get_state()); }
   template<bool old> void set_old() { if (old) set<OLD>(); else reset<OLD>(); }
 
-  /** number of number of externally stored columns;
-  the maximum is 744 in a 16 KiB page */
+  /** number of externally stored columns; the maximum is 744 in a 16 KiB
+  page */
   static uint16_t n_blobs(uint16_t state)
   { return uint16_t(state >> N_BLOBS_SHIFT); }
   uint16_t n_blobs() const { return n_blobs(get_state()); }
@@ -223,7 +224,8 @@ public:
 private:
   friend buf_pool_t;
   friend buf_page_t;
-  /** page descriptor state */
+  /** page descriptor state: ssize, the NONEMPTY/ACCESSED/OLD flags, and the
+  n_blobs count, all packed into one 16-bit atomic word */
   Atomic_relaxed<uint16_t> state;
   /** fix count and state used in buf_page_t */
   Atomic_relaxed<uint32_t> fix;

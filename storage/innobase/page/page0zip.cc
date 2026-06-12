@@ -1238,6 +1238,16 @@ func_exit:
 inline void page_zip_des_t::set_n_blobs_and_empty(ulint n_blobs)
 {
   ut_ad(n_blobs < 1U << (16 - N_BLOBS_SHIFT));
+  /* This snapshot-then-fetch_add does not race with ACCESSED/OLD: those
+  two flag bits sit outside the (NONEMPTY | n_blobs) mask used below, so
+  they cancel out of the computed delta exactly, whatever value they hold
+  at the time the fetch_add executes.
+
+  The one input this trick is not immune to is a concurrent write to
+  NONEMPTY or n_blobs themselves. That cannot happen here: every writer of
+  either (page_zip_write_rec() and its siblings, page_zip_compress(),
+  page_zip_decompress_low()) holds the page's own exclusive latch, the
+  same precondition this function relies on. */
   uint16_t s= uint16_t((n_blobs << N_BLOBS_SHIFT) -
                        (get_state() & (1 << NONEMPTY | ~0U << N_BLOBS_SHIFT)));
   state.fetch_add(s, std::memory_order_relaxed);

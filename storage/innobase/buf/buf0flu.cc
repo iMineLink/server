@@ -1264,18 +1264,25 @@ void buf_page_t::make_young(uint16_t tm) noexcept
   mysql_mutex_assert_owner(&buf_pool.mutex);
   ut_ad(in_file());
 
-  if (!tm || !is_old());
-  else if (tm >= access_time)
+  if (!is_old())
+    return;
+
+  /* tm == 0 means innodb_old_blocks_time is disabled: zero ms of probation
+  is trivially satisfied, so promote on the first observed access. Otherwise a
+  block in LRU_old is promoted only once its first access is at least the
+  probation window old (tm >= access_time), and it re-earns that window every
+  time it falls back into LRU_old. */
+  if (tm && tm < access_time)
   {
-    /* Note: access_time wraps around in only 65536 seconds or 18.2 hours.
-    Let us zero out the access_time here, so that the next flag_accessed()
-    will set a new access time. In that way, a frequently accessed block
-    should be less likely to be a victim of LRU eviction. */
-    access_time= 0;
-    buf_page_make_young(this);
-  }
-  else
     buf_pool.stat.n_pages_not_made_young++;
+    return;
+  }
+
+  /* Note: access_time wraps around in only 65536 seconds or 18.2 hours.
+  Zero it here so the next flag_accessed() will set a new access time and
+  the wrap cannot misclassify a frequently accessed block as "too new". */
+  access_time= 0;
+  buf_page_make_young(this);
 }
 
 /** Adjust to_withdraw during buf_pool_t::shrink() */

@@ -3130,7 +3130,14 @@ bool buf_page_t::set_accessed() noexcept
 #endif /* SAFE_MUTEX */
   if (access_time)
     return true;
-  access_time= uint16_t(time(nullptr));
+  /* CLOCK_MONOTONIC (via my_interval_timer()) keeps the LRU probation
+  heuristic immune to wall-clock jumps and NTP adjustments. */
+  const uint16_t now= uint16_t(my_interval_timer() / 1000000000ULL);
+  /* access_time == 0 is the "never accessed / just made young" sentinel, so a
+  real access must never stamp 0. (uint32_t{now} - 1) >> 31 is 1 only when
+  now == 0, so this lifts just that value to 1 and leaves every other stamp
+  exact, branchlessly (sub/shr/or, no conditional instruction on any target). */
+  access_time= uint16_t(now | ((uint32_t{now} - 1) >> 31));
   return false;
 }
 

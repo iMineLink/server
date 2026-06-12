@@ -791,13 +791,41 @@ public:
   @retval 0 if not accessed */
   inline uint16_t is_accessed() const noexcept { return access_time; }
 
-  /** @return number of invalidate() calls */
+  /** Sentinel returned by modify_clock() once the 47-bit counter has
+  saturated. Outside the range of any non-saturated value (which lies in
+  [0, 2^47)) so a stored pre-saturation modify_clock can never falsely
+  equal it. Callers of restore_position() must also reject a stored value
+  equal to this sentinel (post-saturation stores produce identical values
+  across invalidations, breaking the optimistic-restore invariant). */
+  static constexpr uint64_t MODIFY_CLOCK_POISON= ~uint64_t{0};
+
+  /** @return whether the block's invalidate() counter has saturated and
+  modify_clock() will return MODIFY_CLOCK_POISON */
+  bool modify_clock_saturated() const noexcept
+  { return modify_clock_high & 0x8000; }
+
+  /** @return number of invalidate() calls, or MODIFY_CLOCK_POISON once
+  the counter has saturated (~2^47 invalidate() calls) */
   uint64_t modify_clock() const noexcept
   {
     ut_ad(frame);
     ut_ad(in_file());
     ut_ad(lock.have_any());
+    if (UNIV_UNLIKELY(modify_clock_saturated()))
+      return MODIFY_CLOCK_POISON;
     return modify_clock_low | uint64_t{modify_clock_high} << 32;
+  }
+
+  /** Compare a stored modify_clock against the current one for optimistic
+  restore. Rejects MODIFY_CLOCK_POISON on either side, so saturated blocks
+  always fall through to the pessimistic path.
+  @param stored modify_clock value saved at store_position() time
+  @return whether the optimistic restore comparison succeeds */
+  bool modify_clock_matches(uint64_t stored) const noexcept
+  {
+    if (UNIV_UNLIKELY(stored == MODIFY_CLOCK_POISON))
+      return false;
+    return modify_clock() == stored;
   }
 
   /** Mark the block invalid for optimistic btr_pcur_t::restore_position()
@@ -1900,6 +1928,17 @@ inline void buf_page_t::invalidate() noexcept
   ut_ad(!buf_fix_count() || lock.have_u_or_x());
 #endif /* SAFE_MUTEX */
   assert_block_ahi_valid(reinterpret_cast<buf_block_t*>(this));
+  /* Once the 47-bit counter saturates (modify_clock_high bit 15 set) the
+  block is "stuck": modify_clock() returns MODIFY_CLOCK_POISON and no
+  further invalidate() work is needed. The optimistic restore comparator
+  must reject a stored value equal to MODIFY_CLOCK_POISON to avoid a
+  post-saturation false positive (any two snapshots after saturation are
+  equal). At ~1 M invalidate()/s on a single descriptor, saturation takes
+  on the order of 4 years, so the cold path is genuinely cold. The
+  increment of modify_clock_high tips the field straight from 0x7fff to
+  0x8000, setting the saturation MSB and making subsequent calls no-ops. */
+  if (UNIV_UNLIKELY(modify_clock_saturated()))
+    return;
   if (!++modify_clock_low)
     modify_clock_high++;
 }

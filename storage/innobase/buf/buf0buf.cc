@@ -3018,7 +3018,8 @@ buf_block_t *buf_page_optimistic_get(buf_block_t *block,
       return nullptr;
     }
 
-    if (modify_clock != block->modify_clock() || block->page.is_freed())
+    if (!block->page.modify_clock_matches(modify_clock) ||
+        block->page.is_freed())
     {
       block->page.lock.s_unlock();
       goto fail;
@@ -3033,7 +3034,7 @@ buf_block_t *buf_page_optimistic_get(buf_block_t *block,
     block->page.lock.u_x_upgrade();
     block->page.unfix();
     block= mtr->page_lock_upgrade(*block);
-    ut_ad(modify_clock == block->modify_clock());
+    ut_ad(block->page.modify_clock_matches(modify_clock));
   }
   else if (!block->page.lock.x_lock_try())
     goto fail;
@@ -3041,7 +3042,8 @@ buf_block_t *buf_page_optimistic_get(buf_block_t *block,
   {
     ut_ad(!block->page.is_io_fixed());
 
-    if (modify_clock != block->modify_clock() || block->page.is_freed())
+    if (!block->page.modify_clock_matches(modify_clock) ||
+        block->page.is_freed())
     {
       block->page.lock.x_unlock();
       goto fail;

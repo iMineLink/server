@@ -1,0 +1,13 @@
+SET @save_strict = @@global.innodb_strict_mode;
+SET @save_ro_zip = @@global.innodb_read_only_compressed;
+SET @@global.innodb_strict_mode         = OFF;
+SET @@global.innodb_read_only_compressed = OFF;
+SELECT COUNT(*) FROM big_blobs;
+COUNT(*)
+2
+CHECK TABLE big_blobs;
+Table	Op	Msg_type	Msg_text
+test.big_blobs	check	status	OK
+DROP TABLE big_blobs;
+SET @@global.innodb_strict_mode          = @save_strict;
+SET @@global.innodb_read_only_compressed = @save_ro_zip;

@@ -116,19 +116,23 @@ private:
 
   template<unsigned bit> bool test_and_reset()
   {
-#if defined _MSC_VER && (defined _M_IX86 || defined _M_X64)
-    /* Prevent MSVC 19.40 from emitting a loop around LOCK CMPXCHG */
-    return _interlockedbittestandreset
-      (reinterpret_cast<volatile long*>(&state), bit);
-#else
     /* Starting with GCC 7 and clang 15, on x86 and x86-64 this translates
     to the straightforward 80386 instructions LOCK BTR and SETB.
 
     Luckily, GCC 7 is currently the oldest in currently supported GNU/Linux
-    distributions. Also, FreeBSD 14 ships with clang 16. */
+    distributions. Also, FreeBSD 14 ships with clang 16.
+
+    MSVC provides _interlockedbittestandreset() to emit a single LOCK BTR
+    instead of a loop around LOCK CMPXCHG, but it operates on a 32-bit word.
+    Because state is only 16 bits wide, that word would reach into the
+    adjacent fix field, which is updated atomically without buf_pool.mutex,
+    so the intrinsic's read-modify-write could clobber a concurrent fix
+    update. MSVC has no 16-bit equivalent and no inline assembly on x86-64,
+    so we use the portable atomic on every compiler; on MSVC that may be a
+    CMPXCHG loop, but test_and_reset() runs only in the cold LRU eviction
+    and flush sweeps. */
     return state.fetch_and(uint16_t(~(1U << bit)), std::memory_order_relaxed) &
       (1U << bit);
-#endif
   }
   template<unsigned bit> void set()
   {

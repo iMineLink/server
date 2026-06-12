@@ -240,7 +240,11 @@ static bool btr_pcur_optimistic_latch_leaves(btr_pcur_t *pcur,
   const auto savepoint= mtr->get_savepoint();
   mtr->memo_push(block, MTR_MEMO_BUF_FIX);
 
-  if (UNIV_UNLIKELY(modify_clock != pcur->modify_clock))
+  /* Reject a poisoned pcur->modify_clock even on a match: two snapshots
+  taken after saturation are indistinguishable, so a stored
+  MODIFY_CLOCK_POISON must never be treated as a hit. */
+  if (UNIV_UNLIKELY(pcur->modify_clock == buf_page_t::MODIFY_CLOCK_POISON) ||
+      UNIV_UNLIKELY(modify_clock != pcur->modify_clock))
   {
   fail:
     mtr->rollback_to_savepoint(savepoint);
@@ -267,7 +271,7 @@ static bool btr_pcur_optimistic_latch_leaves(btr_pcur_t *pcur,
   mtr->upgrade_buffer_fix(savepoint, RW_S_LATCH);
   btr_search_drop_page_hash_index(block, pcur->index());
 
-  if (UNIV_UNLIKELY(block->modify_clock() != modify_clock) ||
+  if (UNIV_UNLIKELY(!block->page.modify_clock_matches(modify_clock)) ||
       UNIV_UNLIKELY(block->page.is_freed()) ||
       (prev &&
        memcmp_aligned<4>(FIL_PAGE_NEXT + prev->page.frame,

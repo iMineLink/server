@@ -1324,8 +1324,11 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
   page less than 5% of BP. */
   const size_t buf_lru_min_len=
     std::min((buf_pool.usable_size()) / 20 - 1, size_t{BUF_LRU_MIN_LEN});
+  /* CLOCK_MONOTONIC (via my_interval_timer()) avoids the NTP/wall-clock
+  jumps that uint16_t(time(nullptr)) would expose this heuristic to. */
   const uint16_t tm= buf_pool.LRU_old_time_threshold
-    ? uint16_t(time(nullptr) - buf_pool.LRU_old_time_threshold / 1000)
+    ? uint16_t(my_interval_timer() / 1000000000ULL -
+               buf_pool.LRU_old_time_threshold / 1000)
     : 0;
 
   for (buf_page_t *bpage= UT_LIST_GET_LAST(buf_pool.LRU);
@@ -1515,8 +1518,11 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
   static_assert(FIL_NULL > SRV_TMP_SPACE_ID, "consistency");
   static_assert(FIL_NULL > SRV_SPACE_ID_UPPER_BOUND, "consistency");
 
+  /* CLOCK_MONOTONIC (via my_interval_timer()) avoids the NTP/wall-clock
+  jumps that uint16_t(time(nullptr)) would expose this heuristic to. */
   const uint16_t tm= buf_pool.LRU_old_time_threshold
-    ? uint16_t(time(nullptr) - buf_pool.LRU_old_time_threshold / 1000)
+    ? uint16_t(my_interval_timer() / 1000000000ULL -
+               buf_pool.LRU_old_time_threshold / 1000)
     : 0;
 
   /* Start from the end of the list looking for a suitable block to be

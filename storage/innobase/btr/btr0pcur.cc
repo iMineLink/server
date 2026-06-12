@@ -267,7 +267,7 @@ static bool btr_pcur_optimistic_latch_leaves(btr_pcur_t *pcur,
   mtr->upgrade_buffer_fix(savepoint, RW_S_LATCH);
   btr_search_drop_page_hash_index(block, pcur->index());
 
-  if (UNIV_UNLIKELY(block->modify_clock() != modify_clock) ||
+  if (UNIV_UNLIKELY(!block->page.modify_clock_matches(modify_clock)) ||
       UNIV_UNLIKELY(block->page.is_freed()) ||
       (prev &&
        memcmp_aligned<4>(FIL_PAGE_NEXT + prev->page.frame,

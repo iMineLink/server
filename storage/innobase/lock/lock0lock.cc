@@ -4592,10 +4592,26 @@ static inline bool table_lock_mutex_try_acquire_spin(dict_table_t *table)
   return false;
 }
 
+/** Escalate the optimistic lock-release loop to the exclusive lock_sys.latch
+once no-progress passes outpace progress passes by this much: a pass that
+frees no lock increments the counter, a pass that frees one decrements it
+(floored at 0). A fully stuck transaction still escalates after 5 passes, as
+the previous fixed cap did. */
+static constexpr unsigned LOCK_RELEASE_MAX_STALLS= 5;
+
+/** Hard ceiling on optimistic release passes, independent of the stall
+counter: bounds the loop when concurrent activity keeps changing the lock set
+(e.g. lock_rec_move()) so that progress never converges. Set well above
+LOCK_RELEASE_MAX_STALLS so it only caps sustained churn. */
+static constexpr unsigned LOCK_RELEASE_MAX_PASSES= 100;
+
 /** Release the explicit locks of a committing transaction,
 and release possible other transactions waiting because of these locks.
+@param trx            a committing transaction
+@param made_progress  if non-null, set under trx->mutex to whether this pass
+                      freed a lock (so the caller needs no unlatched read)
 @return whether the operation succeeded */
-static bool lock_release_try(trx_t *trx)
+static bool lock_release_try(trx_t *trx, bool *made_progress= nullptr)
 {
   /* At this point, trx->lock.trx_locks cannot be modified by other
   threads, because our transaction has been committed.
@@ -4609,6 +4625,7 @@ static bool lock_release_try(trx_t *trx)
   DBUG_ASSERT(!trx->is_referenced());
 
   bool all_released= true;
+  bool freed= false;
 restart:
   ulint count= 1000;
   /* We will not attempt hardware lock elision (memory transaction)
@@ -4642,6 +4659,7 @@ restart:
       {
         lock_rec_dequeue_from_page(lock, false);
         latch->release();
+        freed= true;
       }
     }
     else
@@ -4657,6 +4675,7 @@ restart:
       {
         lock_table_dequeue(lock, false);
         table->lock_mutex_unlock();
+        freed= true;
       }
     }
 
@@ -4669,6 +4688,8 @@ restart:
   trx->mutex_unlock();
   if (all_released && !count)
     goto restart;
+  if (made_progress)
+    *made_progress= freed;
   return all_released;
 }
 
@@ -4686,9 +4707,25 @@ void lock_release(trx_t *trx)
 #endif
   ulint count;
 
-  for (count= 5; count--; )
-    if (lock_release_try(trx))
+  /* Optimistic release under the shared latch. lock_release_try() reports
+  whether it freed a lock, computed under trx->mutex: we must not read
+  trx_locks here, as a concurrent lock_rec_move() can change it between
+  passes. Escalate on LOCK_RELEASE_MAX_STALLS net stalls or
+  LOCK_RELEASE_MAX_PASSES total passes. */
+  unsigned stalls= 0;
+  for (count= 0; count < LOCK_RELEASE_MAX_PASSES; count++)
+  {
+    bool progressed;
+    if (lock_release_try(trx, &progressed))
       goto released;
+    if (progressed)
+    {
+      if (stalls)
+        stalls--;
+    }
+    else if (++stalls == LOCK_RELEASE_MAX_STALLS)
+      break;
+  }
 
   /* Fall back to acquiring lock_sys.latch in exclusive mode */
 restart:
@@ -4911,7 +4948,8 @@ and wake up possible other transactions waiting because of these locks.
 @param trx               transaction in XA PREPARE state
 @param unlock_unmodified must unmodified by the trx records be unlocked or not
 @return whether all locks were released */
-static bool lock_release_on_prepare_try(trx_t *trx, bool unlock_unmodified)
+static bool lock_release_on_prepare_try(trx_t *trx, bool unlock_unmodified,
+                                        bool *made_progress= nullptr)
 {
   /* At this point, trx->lock.trx_locks can still be modified by other
   threads to convert implicit exclusive locks into explicit ones.
@@ -4922,6 +4960,10 @@ static bool lock_release_on_prepare_try(trx_t *trx, bool unlock_unmodified)
   DBUG_ASSERT(trx->state == TRX_STATE_PREPARED);
 
   bool all_released= true;
+  /* Progress flag, set at the unconditional release sites only; the
+  unlock_unmodified path is excluded because lock_rec_unlock_unmodified()
+  returns true even when it frees nothing. */
+  bool freed= false;
   mtr_t mtr{trx};
   rec_offs offsets_[REC_OFFS_NORMAL_SIZE];
   rec_offs *offsets= offsets_;
@@ -4959,11 +5001,13 @@ reiterate:
         {
           lock_rec_dequeue_from_page(lock, false);
           latch->release();
+          freed= true;
         }
         else if (supremum_bit)
         {
           lock_rec_unlock(*cell, lock, PAGE_HEAP_NO_SUPREMUM);
           latch->release();
+          freed= true;
         }
         else if (unlock_unmodified)
         {
@@ -5030,6 +5074,7 @@ reiterate:
         {
           lock_table_dequeue(lock, false);
           table->lock_mutex_unlock();
+          freed= true;
         }
         else
           all_released= false;
@@ -5046,6 +5091,8 @@ reiterate:
 
   lock_sys.rd_unlock();
   trx->mutex_unlock();
+  if (made_progress)
+    *made_progress= freed;
   return all_released;
 }
 
@@ -5095,9 +5142,22 @@ void lock_release_on_prepare(trx_t *trx)
 #ifdef ENABLED_DEBUG_SYNC
   DBUG_EXECUTE_IF("skip_lock_release_on_prepare_try", goto skip_try;);
 #endif
-  for (ulint count= 5; count--; )
-    if (lock_release_on_prepare_try(trx, unlock_unmodified))
+  /* Same optimistic-release loop as lock_release() (see there). A prepared
+  transaction is still active, so trx_locks may grow between passes, making
+  LOCK_RELEASE_MAX_PASSES the effective bound. */
+  for (unsigned count= 0, stalls= 0; count < LOCK_RELEASE_MAX_PASSES; count++)
+  {
+    bool progressed;
+    if (lock_release_on_prepare_try(trx, unlock_unmodified, &progressed))
       return;
+    if (progressed)
+    {
+      if (stalls)
+        stalls--;
+    }
+    else if (++stalls == LOCK_RELEASE_MAX_STALLS)
+      break;
+  }
 #ifdef ENABLED_DEBUG_SYNC
 skip_try:
 #endif

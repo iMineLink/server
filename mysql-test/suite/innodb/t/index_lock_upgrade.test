@@ -36,6 +36,8 @@ BEGIN
   SET @rs_prev= IFNULL(@rs_curr, 0);
   SET @pd_prev= IFNULL(@pd_curr, 0);
   SET @lu_prev= IFNULL(@lu_curr, 0);
+  SET @nr_prev= IFNULL(@nr_curr, 0);
+  SET @md_prev= IFNULL(@md_curr, 0);
   SET @pi_prev= IFNULL(@pi_curr, 0);
   SET @pe_prev= IFNULL(@pe_curr, 0);
   SET @pu_prev= IFNULL(@pu_curr, 0);
@@ -55,6 +57,10 @@ BEGIN
     WHERE NAME= 'index_page_discards';
   SELECT VARIABLE_VALUE INTO @lu_curr FROM INFORMATION_SCHEMA.GLOBAL_STATUS
     WHERE VARIABLE_NAME= 'Innodb_btr_cur_n_index_lock_upgrades';
+  SELECT VARIABLE_VALUE INTO @nr_curr FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+    WHERE VARIABLE_NAME= 'Innodb_btr_cur_n_need_opposite_intention_root';
+  SELECT VARIABLE_VALUE INTO @md_curr FROM INFORMATION_SCHEMA.GLOBAL_STATUS
+    WHERE VARIABLE_NAME= 'Innodb_btr_cur_n_modify_tree_descend';
   SELECT VARIABLE_VALUE INTO @pi_curr FROM INFORMATION_SCHEMA.GLOBAL_STATUS
     WHERE VARIABLE_NAME= 'Innodb_btr_cur_pessimistic_insert_calls';
   SELECT VARIABLE_VALUE INTO @pe_curr FROM INFORMATION_SCHEMA.GLOBAL_STATUS
@@ -72,6 +78,18 @@ BEGIN
     SELECT CONCAT('n_index_lock_upgrades_', suffix) AS ''
     UNION ALL
     SELECT CAST(@lu_curr - @lu_prev AS SIGNED)
+    UNION ALL
+    SELECT ''
+    UNION ALL
+    SELECT CONCAT('need_opposite_intention_root_', suffix)
+    UNION ALL
+    SELECT CAST(@nr_curr - @nr_prev AS SIGNED)
+    UNION ALL
+    SELECT ''
+    UNION ALL
+    SELECT CONCAT('modify_tree_descend_', suffix)
+    UNION ALL
+    SELECT CAST(@md_curr - @md_prev AS SIGNED)
     UNION ALL
     SELECT ''
     UNION ALL

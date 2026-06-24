@@ -1,0 +1,252 @@
+--- index_lock_upgrade.result
++++ index_lock_upgrade,root_off.reject
+@@ -29,7 +29,7 @@
+ 5
+ 
+ modify_tree_descend_t1_insert
+-11
++16
+ 
+ pessimistic_insert_calls_t1_insert
+ 6
+@@ -70,13 +70,13 @@
+ CALL show_index_stats(CONCAT('t1', '_update_null_to_notnull'));
+ 
+ n_index_lock_upgrades_t1_update_null_to_notnull
+-414
++120
+ 
+ need_opposite_intention_root_t1_update_null_to_notnull
+ 414
+ 
+ modify_tree_descend_t1_update_null_to_notnull
+-828
++948
+ 
+ pessimistic_insert_calls_t1_update_null_to_notnull
+ 5
+@@ -164,13 +164,13 @@
+ CALL show_index_stats(CONCAT('t1', '_update_notnull_to_null'));
+ 
+ n_index_lock_upgrades_t1_update_notnull_to_null
+-380
++75
+ 
+ need_opposite_intention_root_t1_update_notnull_to_null
+ 380
+ 
+ modify_tree_descend_t1_update_notnull_to_null
+-760
++835
+ 
+ pessimistic_insert_calls_t1_update_notnull_to_null
+ 0
+@@ -215,13 +215,13 @@
+ CALL show_index_stats(CONCAT('t1', '_delete_upper_half'));
+ 
+ n_index_lock_upgrades_t1_delete_upper_half
+-183
++179
+ 
+ need_opposite_intention_root_t1_delete_upper_half
+ 183
+ 
+ modify_tree_descend_t1_delete_upper_half
+-366
++545
+ 
+ pessimistic_insert_calls_t1_delete_upper_half
+ 0
+@@ -266,13 +266,13 @@
+ CALL show_index_stats(CONCAT('t1', '_delete_even'));
+ 
+ n_index_lock_upgrades_t1_delete_even
+-13
++10
+ 
+ need_opposite_intention_root_t1_delete_even
+ 13
+ 
+ modify_tree_descend_t1_delete_even
+-26
++36
+ 
+ pessimistic_insert_calls_t1_delete_even
+ 0
+@@ -323,7 +323,7 @@
+ 16
+ 
+ modify_tree_descend_t1_delete_remaining
+-32
++48
+ 
+ pessimistic_insert_calls_t1_delete_remaining
+ 0
+@@ -386,7 +386,7 @@
+ 7
+ 
+ modify_tree_descend_t2_insert
+-18
++23
+ 
+ pessimistic_insert_calls_t2_insert
+ 9
+@@ -427,13 +427,13 @@
+ CALL show_index_stats(CONCAT('t2', '_update_null_to_notnull'));
+ 
+ n_index_lock_upgrades_t2_update_null_to_notnull
+-1016
++722
+ 
+ need_opposite_intention_root_t2_update_null_to_notnull
+ 1016
+ 
+ modify_tree_descend_t2_update_null_to_notnull
+-2036
++2754
+ 
+ pessimistic_insert_calls_t2_update_null_to_notnull
+ 9
+@@ -480,7 +480,7 @@
+ 551
+ 
+ modify_tree_descend_t2_update_inplace
+-1105
++1653
+ 
+ pessimistic_insert_calls_t2_update_inplace
+ 3
+@@ -521,13 +521,13 @@
+ CALL show_index_stats(CONCAT('t2', '_update_notnull_to_null'));
+ 
+ n_index_lock_upgrades_t2_update_notnull_to_null
+-583
++278
+ 
+ need_opposite_intention_root_t2_update_notnull_to_null
+ 583
+ 
+ modify_tree_descend_t2_update_notnull_to_null
+-1169
++1444
+ 
+ pessimistic_insert_calls_t2_update_notnull_to_null
+ 3
+@@ -572,13 +572,13 @@
+ CALL show_index_stats(CONCAT('t2', '_delete_upper_half'));
+ 
+ n_index_lock_upgrades_t2_delete_upper_half
+-340
++336
+ 
+ need_opposite_intention_root_t2_delete_upper_half
+ 340
+ 
+ modify_tree_descend_t2_delete_upper_half
+-680
++1016
+ 
+ pessimistic_insert_calls_t2_delete_upper_half
+ 0
+@@ -623,13 +623,13 @@
+ CALL show_index_stats(CONCAT('t2', '_delete_even'));
+ 
+ n_index_lock_upgrades_t2_delete_even
+-15
++12
+ 
+ need_opposite_intention_root_t2_delete_even
+ 15
+ 
+ modify_tree_descend_t2_delete_even
+-30
++42
+ 
+ pessimistic_insert_calls_t2_delete_even
+ 0
+@@ -680,7 +680,7 @@
+ 16
+ 
+ modify_tree_descend_t2_delete_remaining
+-32
++48
+ 
+ pessimistic_insert_calls_t2_delete_remaining
+ 0
+@@ -743,7 +743,7 @@
+ 10
+ 
+ modify_tree_descend_t3_insert
+-24
++32
+ 
+ pessimistic_insert_calls_t3_insert
+ 12
+@@ -784,13 +784,13 @@
+ CALL show_index_stats(CONCAT('t3', '_update_null_to_notnull'));
+ 
+ n_index_lock_upgrades_t3_update_null_to_notnull
+-1602
++636
+ 
+ need_opposite_intention_root_t3_update_null_to_notnull
+ 1602
+ 
+ modify_tree_descend_t3_update_null_to_notnull
+-3208
++3840
+ 
+ pessimistic_insert_calls_t3_update_null_to_notnull
+ 12
+@@ -837,7 +837,7 @@
+ 551
+ 
+ modify_tree_descend_t3_update_inplace
+-1105
++1653
+ 
+ pessimistic_insert_calls_t3_update_inplace
+ 3
+@@ -878,13 +878,13 @@
+ CALL show_index_stats(CONCAT('t3', '_update_notnull_to_null'));
+ 
+ n_index_lock_upgrades_t3_update_notnull_to_null
+-1203
++237
+ 
+ need_opposite_intention_root_t3_update_notnull_to_null
+ 1203
+ 
+ modify_tree_descend_t3_update_notnull_to_null
+-2409
++2643
+ 
+ pessimistic_insert_calls_t3_update_notnull_to_null
+ 3
+@@ -935,7 +935,7 @@
+ 450
+ 
+ modify_tree_descend_t3_delete_upper_half
+-900
++1350
+ 
+ pessimistic_insert_calls_t3_delete_upper_half
+ 0
+@@ -986,7 +986,7 @@
+ 123
+ 
+ modify_tree_descend_t3_delete_even
+-246
++369
+ 
+ pessimistic_insert_calls_t3_delete_even
+ 0
+@@ -1037,7 +1037,7 @@
+ 89
+ 
+ modify_tree_descend_t3_delete_remaining
+-178
++267
+ 
+ pessimistic_insert_calls_t3_delete_remaining
+ 0

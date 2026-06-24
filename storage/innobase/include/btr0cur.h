@@ -835,6 +835,10 @@ extern ulint	btr_cur_n_sea_old;
 extern uint	btr_cur_limit_optimistic_insert_debug;
 /** Number of times index lock was upgraded from SX to X */
 extern Atomic_counter<uint64_t> btr_cur_n_index_lock_upgrades;
+/** Number of times btr_cur_need_opposite_intention() was called on the root */
+extern Atomic_counter<uint64_t> btr_cur_n_need_opposite_intention_root;
+/** Number of B-tree pages fetched during BTR_MODIFY_TREE descents */
+extern Atomic_counter<uint64_t> btr_cur_n_modify_tree_descend;
 /** Number of times btr_cur_pessimistic_insert() was called */
 extern Atomic_counter<uint64_t> btr_cur_pessimistic_insert_calls;
 /** Number of times btr_cur_pessimistic_update() was called */
@@ -849,6 +853,9 @@ extern Atomic_counter<uint64_t> btr_cur_pessimistic_update_optim_err_overflows;
 
 /** innodb_index_shrink; see the comment in btr0cur.cc */
 extern my_bool btr_cur_index_shrink;
+
+/** innodb_index_lock_upgrade_root; see the comment in btr0cur.cc */
+extern my_bool btr_cur_index_lock_upgrade_root;
 
 #include "btr0cur.inl"
 

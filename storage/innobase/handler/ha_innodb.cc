@@ -1093,6 +1093,14 @@ static SHOW_VAR innodb_status_variables[]= {
    (void*) &show_atomic_counter_u64<
      &btr_cur_n_index_lock_upgrades>,
    SHOW_SIMPLE_FUNC},
+  {"btr_cur_n_need_opposite_intention_root",
+   (void*) &show_atomic_counter_u64<
+     &btr_cur_n_need_opposite_intention_root>,
+   SHOW_SIMPLE_FUNC},
+  {"btr_cur_n_modify_tree_descend",
+   (void*) &show_atomic_counter_u64<
+     &btr_cur_n_modify_tree_descend>,
+   SHOW_SIMPLE_FUNC},
   {"btr_cur_pessimistic_insert_calls",
    (void*) &show_atomic_counter_u64<
      &btr_cur_pessimistic_insert_calls>,
@@ -19831,6 +19839,15 @@ static MYSQL_SYSVAR_BOOL(index_shrink,
   " and the contention they cause, at the cost of slightly sparser pages",
   NULL, NULL, TRUE);
 
+static MYSQL_SYSVAR_BOOL(index_lock_upgrade_root,
+  btr_cur_index_lock_upgrade_root, PLUGIN_VAR_OPCMDARG,
+  "Allow a structural change detected at the root page to upgrade the index"
+  " tree lock from SX to X. The default ON keeps the current behavior;"
+  " OFF skips the root in the opposite-intention check (the root has no parent"
+  " or siblings, so the change cannot cascade upward), avoiding those upgrades"
+  " and the contention they cause",
+  NULL, NULL, TRUE);
+
 #ifdef UNIV_DEBUG
 static MYSQL_SYSVAR_UINT(limit_optimistic_insert_debug,
   btr_cur_limit_optimistic_insert_debug, PLUGIN_VAR_RQCMDARG,
@@ -20115,6 +20132,7 @@ static struct st_mysql_sys_var* innobase_system_variables[]= {
   MYSQL_SYSVAR(compression_pad_pct_max),
   MYSQL_SYSVAR(default_row_format),
   MYSQL_SYSVAR(index_shrink),
+  MYSQL_SYSVAR(index_lock_upgrade_root),
 #ifdef UNIV_DEBUG
   MYSQL_SYSVAR(limit_optimistic_insert_debug),
   MYSQL_SYSVAR(trx_purge_view_update_only_debug),

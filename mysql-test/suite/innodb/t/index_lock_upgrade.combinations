@@ -1,33 +1,50 @@
-# MDEV-38814: exercise both states of innodb_index_shrink.
+# MDEV-38814: exercise the cross-product of the two independent gates that
+# reduce index tree lock SX-to-X upgrades, innodb_index_shrink and
+# innodb_index_lock_upgrade_root. Each combination sets both variables; the
+# first ([on]) is the all-legacy baseline recorded as the base .result, the
+# rest are recorded as rdiffs against it.
 #
-# [on]: legacy behavior.
+# innodb_index_shrink=OFF: all DB_UNDERFLOW fallbacks on growing records are
+# eliminated, DB_OVERFLOW fallbacks on growing records are forced to split when
+# the page cannot satisfy BTR_CUR_PAGE_REORGANIZE_LIMIT, and the index-lock
+# upgrade count drops accordingly on the same workload. Same-size record
+# UPDATEs are unaffected. Shrinking-record UPDATEs are marginally affected,
+# because they occur after the record-growing UPDATEs and an extra page is
+# produced via split as a side-effect, so they operate on a slightly different
+# B-tree.
 #
-# [off]: innodb_index_shrink=OFF. All DB_UNDERFLOW fallbacks on growing
-# records are eliminated, DB_OVERFLOW fallbacks on growing records are forced
-# to split when the page cannot satisfy BTR_CUR_PAGE_REORGANIZE_LIMIT, and the
-# index-lock upgrade count drops accordingly on the same workload.
-# Same-size record UPDATEs are unaffected.
-# Shrinking-record UPDATEs are marginally affected, because they occur after
-# the record-growing UPDATEs and an extra page is produced via split as a
-# side-effect, so they operate on a slightly different B-tree.
+# innodb_index_lock_upgrade_root=OFF: btr_cur_need_opposite_intention() returns
+# false for the root page (which has no parent or siblings, so a structural
+# change cannot cascade upward), removing the SX-to-X upgrades that the root
+# would otherwise force. need_opposite_intention_root counts the root
+# encounters either way; n_index_lock_upgrades is what drops.
 #
-# Compressed pages (t3) get the optimistic-side change but not the
-# pessimistic-side one, by design. The optimistic gate
-# (page_get_data_size vs BTR_CUR_PAGE_COMPRESS_LIMIT) is an
-# uncompressed-frame metric that translates cleanly to compressed pages,
-# so it applies uniformly. The pessimistic gate
-# (page_get_max_insert_size_after_reorganize vs
-# BTR_CUR_PAGE_REORGANIZE_LIMIT) is also an uncompressed-frame metric,
-# but the actual constraint on a compressed page is whether the
-# compressed image fits in KEY_BLOCK_SIZE after recompress, a
-# different question. Using the uncompressed metric there would
-# mispredict in both directions, so btr_cur_pessimistic_update() falls
-# through to the legacy btr_cur_insert_if_possible() path, which
-# already handles compressed-page complexity. The t3 rdiff therefore
-# shows shrink on/off deltas only on the optimistic-side counters.
+# Compressed pages (t3) get the innodb_index_shrink optimistic-side change but
+# not the pessimistic-side one, by design. The optimistic gate
+# (page_get_data_size vs BTR_CUR_PAGE_COMPRESS_LIMIT) is an uncompressed-frame
+# metric that translates cleanly to compressed pages, so it applies uniformly.
+# The pessimistic gate (page_get_max_insert_size_after_reorganize vs
+# BTR_CUR_PAGE_REORGANIZE_LIMIT) is also an uncompressed-frame metric, but the
+# actual constraint on a compressed page is whether the compressed image fits
+# in KEY_BLOCK_SIZE after recompress, a different question. Using the
+# uncompressed metric there would mispredict in both directions, so
+# btr_cur_pessimistic_update() falls through to the legacy
+# btr_cur_insert_if_possible() path, which already handles compressed-page
+# complexity. The innodb_index_lock_upgrade_root gate is page-position based
+# (root vs non-root) and therefore applies uniformly to t3.
 
 [on]
 --loose-innodb-index-shrink=ON
+--loose-innodb-index-lock-upgrade-root=ON
 
-[off]
+[shrink_off]
 --loose-innodb-index-shrink=OFF
+--loose-innodb-index-lock-upgrade-root=ON
+
+[root_off]
+--loose-innodb-index-shrink=ON
+--loose-innodb-index-lock-upgrade-root=OFF
+
+[both_off]
+--loose-innodb-index-shrink=OFF
+--loose-innodb-index-lock-upgrade-root=OFF

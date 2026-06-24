@@ -874,6 +874,18 @@ NUMERIC_BLOCK_SIZE	NULL
 ENUM_VALUE_LIST	OFF,ON
 READ_ONLY	NO
 COMMAND_LINE_ARGUMENT	REQUIRED
+VARIABLE_NAME	INNODB_INDEX_LOCK_UPGRADE_ROOT
+SESSION_VALUE	NULL
+DEFAULT_VALUE	ON
+VARIABLE_SCOPE	GLOBAL
+VARIABLE_TYPE	BOOLEAN
+VARIABLE_COMMENT	Allow a structural change detected at the root page to upgrade the index tree lock from SX to X. The default ON keeps the current behavior; OFF skips the root in the opposite-intention check (the root has no parent or siblings, so the change cannot cascade upward), avoiding those upgrades and the contention they cause
+NUMERIC_MIN_VALUE	NULL
+NUMERIC_MAX_VALUE	NULL
+NUMERIC_BLOCK_SIZE	NULL
+ENUM_VALUE_LIST	OFF,ON
+READ_ONLY	NO
+COMMAND_LINE_ARGUMENT	OPTIONAL
 VARIABLE_NAME	INNODB_INDEX_SHRINK
 SESSION_VALUE	NULL
 DEFAULT_VALUE	ON

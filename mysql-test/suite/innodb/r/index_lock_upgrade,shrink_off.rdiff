@@ -1,11 +1,19 @@
 --- index_lock_upgrade.result
-+++ index_lock_upgrade,off.reject
-@@ -64,37 +64,37 @@
++++ index_lock_upgrade,shrink_off.reject
+@@ -70,43 +70,43 @@
  CALL show_index_stats(CONCAT('t1', '_update_null_to_notnull'));
  
  n_index_lock_upgrades_t1_update_null_to_notnull
 -414
 +6
+ 
+ need_opposite_intention_root_t1_update_null_to_notnull
+-414
++6
+ 
+ modify_tree_descend_t1_update_null_to_notnull
+-828
++12
  
  pessimistic_insert_calls_t1_update_null_to_notnull
 -5
@@ -46,12 +54,20 @@
  
  index_page_discards_t1_update_null_to_notnull
  0
-@@ -146,22 +146,22 @@
+@@ -164,28 +164,28 @@
  CALL show_index_stats(CONCAT('t1', '_update_notnull_to_null'));
  
  n_index_lock_upgrades_t1_update_notnull_to_null
 -380
 +422
+ 
+ need_opposite_intention_root_t1_update_notnull_to_null
+-380
++422
+ 
+ modify_tree_descend_t1_update_notnull_to_null
+-760
++844
  
  pessimistic_insert_calls_t1_update_notnull_to_null
  0
@@ -74,7 +90,7 @@
  
  index_x_lock_calls_t1_update_notnull_to_null
  0
-@@ -170,13 +170,13 @@
+@@ -194,13 +194,13 @@
  0
  
  index_page_merge_attempts_t1_update_notnull_to_null
@@ -91,12 +107,20 @@
  
  index_page_discards_t1_update_notnull_to_null
  0
-@@ -191,13 +191,13 @@
+@@ -215,19 +215,19 @@
  CALL show_index_stats(CONCAT('t1', '_delete_upper_half'));
  
  n_index_lock_upgrades_t1_delete_upper_half
 -183
 +186
+ 
+ need_opposite_intention_root_t1_delete_upper_half
+-183
++186
+ 
+ modify_tree_descend_t1_delete_upper_half
+-366
++372
  
  pessimistic_insert_calls_t1_delete_upper_half
  0
@@ -107,7 +131,7 @@
  
  pessimistic_update_calls_t1_delete_upper_half
  0
-@@ -215,7 +215,7 @@
+@@ -245,7 +245,7 @@
  0
  
  index_page_merge_attempts_t1_delete_upper_half
@@ -116,12 +140,20 @@
  
  index_page_merge_successful_t1_delete_upper_half
  3
-@@ -379,37 +379,37 @@
+@@ -427,43 +427,43 @@
  CALL show_index_stats(CONCAT('t2', '_update_null_to_notnull'));
  
  n_index_lock_upgrades_t2_update_null_to_notnull
 -1016
 +608
+ 
+ need_opposite_intention_root_t2_update_null_to_notnull
+-1016
++608
+ 
+ modify_tree_descend_t2_update_null_to_notnull
+-2036
++1220
  
  pessimistic_insert_calls_t2_update_null_to_notnull
 -9
@@ -162,12 +194,20 @@
  
  index_page_discards_t2_update_null_to_notnull
  3
-@@ -461,22 +461,22 @@
+@@ -521,28 +521,28 @@
  CALL show_index_stats(CONCAT('t2', '_update_notnull_to_null'));
  
  n_index_lock_upgrades_t2_update_notnull_to_null
 -583
 +625
+ 
+ need_opposite_intention_root_t2_update_notnull_to_null
+-583
++625
+ 
+ modify_tree_descend_t2_update_notnull_to_null
+-1169
++1253
  
  pessimistic_insert_calls_t2_update_notnull_to_null
  3
@@ -190,7 +230,7 @@
  
  index_x_lock_calls_t2_update_notnull_to_null
  0
-@@ -485,13 +485,13 @@
+@@ -551,13 +551,13 @@
  3
  
  index_page_merge_attempts_t2_update_notnull_to_null
@@ -207,12 +247,20 @@
  
  index_page_discards_t2_update_notnull_to_null
  0
-@@ -506,13 +506,13 @@
+@@ -572,19 +572,19 @@
  CALL show_index_stats(CONCAT('t2', '_delete_upper_half'));
  
  n_index_lock_upgrades_t2_delete_upper_half
 -340
 +343
+ 
+ need_opposite_intention_root_t2_delete_upper_half
+-340
++343
+ 
+ modify_tree_descend_t2_delete_upper_half
+-680
++686
  
  pessimistic_insert_calls_t2_delete_upper_half
  0
@@ -223,7 +271,7 @@
  
  pessimistic_update_calls_t2_delete_upper_half
  0
-@@ -530,7 +530,7 @@
+@@ -602,7 +602,7 @@
  0
  
  index_page_merge_attempts_t2_delete_upper_half
@@ -232,12 +280,20 @@
  
  index_page_merge_successful_t2_delete_upper_half
  4
-@@ -694,19 +694,19 @@
+@@ -784,25 +784,25 @@
  CALL show_index_stats(CONCAT('t3', '_update_null_to_notnull'));
  
  n_index_lock_upgrades_t3_update_null_to_notnull
 -1602
 +610
+ 
+ need_opposite_intention_root_t3_update_null_to_notnull
+-1602
++610
+ 
+ modify_tree_descend_t3_update_null_to_notnull
+-3208
++1224
  
  pessimistic_insert_calls_t3_update_null_to_notnull
  12
@@ -256,7 +312,7 @@
  
  pessimistic_update_optim_err_overflows_t3_update_null_to_notnull
  0
-@@ -718,10 +718,10 @@
+@@ -814,10 +814,10 @@
  12
  
  index_page_merge_attempts_t3_update_null_to_notnull
@@ -269,7 +325,7 @@
  
  index_page_reorg_successful_t3_update_null_to_notnull
  0
-@@ -782,7 +782,7 @@
+@@ -890,7 +890,7 @@
  3
  
  pessimistic_delete_calls_t3_update_notnull_to_null
@@ -278,7 +334,7 @@
  
  pessimistic_update_calls_t3_update_notnull_to_null
  1000
-@@ -803,7 +803,7 @@
+@@ -911,7 +911,7 @@
  1200
  
  index_page_merge_successful_t3_update_notnull_to_null

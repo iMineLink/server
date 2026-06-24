@@ -19848,6 +19848,16 @@ static MYSQL_SYSVAR_BOOL(index_lock_upgrade_root,
   " and the contention they cause",
   NULL, NULL, TRUE);
 
+static MYSQL_SYSVAR_BOOL(defer_purge_merges,
+  btr_cur_defer_purge_merges, PLUGIN_VAR_OPCMDARG,
+  "Defer B-tree page merges during purge to the end of the purge batch"
+  " instead of attempting them per deleted record. The default OFF keeps the"
+  " current behavior; ON lets an optimistic purge delete proceed on an"
+  " under-full page and records the page for a single compression pass after"
+  " the batch, avoiding the repeated failed merge attempts and pessimistic"
+  " delete fallbacks under-full siblings would otherwise trigger",
+  NULL, NULL, FALSE);
+
 #ifdef UNIV_DEBUG
 static MYSQL_SYSVAR_UINT(limit_optimistic_insert_debug,
   btr_cur_limit_optimistic_insert_debug, PLUGIN_VAR_RQCMDARG,
@@ -20133,6 +20143,7 @@ static struct st_mysql_sys_var* innobase_system_variables[]= {
   MYSQL_SYSVAR(default_row_format),
   MYSQL_SYSVAR(index_shrink),
   MYSQL_SYSVAR(index_lock_upgrade_root),
+  MYSQL_SYSVAR(defer_purge_merges),
 #ifdef UNIV_DEBUG
   MYSQL_SYSVAR(limit_optimistic_insert_debug),
   MYSQL_SYSVAR(trx_purge_view_update_only_debug),

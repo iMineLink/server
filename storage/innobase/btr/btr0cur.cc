@@ -150,6 +150,15 @@ the root, which has no parent or siblings and therefore cannot cascade a
 structural change upward, avoiding the upgrade those checks would force. */
 my_bool btr_cur_index_lock_upgrade_root;
 
+/** innodb_defer_purge_merges: whether the purge threads defer B-tree page
+merges to the end of the purge batch instead of attempting them per deleted
+record. OFF (the default) keeps the historical behavior. When ON, an
+optimistic purge delete proceeds even on an under-full page
+(BTR_PURGE_DELETE_FLAG) and the page is recorded for a single compression pass
+after the batch, avoiding the repeated failed merge attempts and pessimistic
+delete fallbacks that under-full siblings would otherwise trigger. */
+my_bool btr_cur_defer_purge_merges;
+
 /** In the optimistic insert, if the insert does not fit, but this much space
 can be released by page reorganize, then it is reorganized */
 #define BTR_CUR_PAGE_REORGANIZE_LIMIT	(srv_page_size / 32)
@@ -4449,7 +4458,7 @@ btr_cur_optimistic_delete(
 				delete; cursor stays valid: if deletion
 				succeeds, on function exit it points to the
 				successor of the deleted record */
-	ulint		flags,	/*!< in: BTR_CREATE_FLAG or 0 */
+	ulint		flags,	/*!< in: BTR_CREATE_FLAG or BTR_PURGE_DELETE_FLAG or 0 */
 	mtr_t*		mtr)	/*!< in: mtr; if this function returns
 				TRUE on a leaf page of a secondary
 				index, the mtr must be committed
@@ -4462,7 +4471,9 @@ btr_cur_optimistic_delete(
 	rec_offs*	offsets		= offsets_;
 	rec_offs_init(offsets_);
 
-	ut_ad(flags == 0 || flags == BTR_CREATE_FLAG);
+	ut_ad(flags == 0 || flags == BTR_CREATE_FLAG
+	      || flags == BTR_PURGE_DELETE_FLAG);
+	ut_ad(!(flags & BTR_PURGE_DELETE_FLAG) || cursor->index()->is_btree());
 	ut_ad(mtr->memo_contains_flagged(btr_cur_get_block(cursor),
 					 MTR_MEMO_PAGE_X_FIX));
 	ut_ad(mtr->is_named_space(cursor->index()->table->space));
@@ -4489,9 +4500,12 @@ btr_cur_optimistic_delete(
 		err = DB_FAIL; goto func_exit;);
 
 	if (rec_offs_any_extern(offsets)
-	    || !btr_cur_can_delete_without_compress(cursor,
-						    rec_offs_size(offsets),
-						    mtr)) {
+	    || (!(flags & BTR_PURGE_DELETE_FLAG)
+	        && !btr_cur_can_delete_without_compress(
+	               cursor, rec_offs_size(offsets), mtr))
+	    || ((flags & BTR_PURGE_DELETE_FLAG)
+	        && page_get_n_recs(block->page.frame) == 1
+	        && block->page.id().page_no() != cursor->index()->page)) {
 		/* prefetch siblings of the leaf for the pessimistic
 		operation. */
 		btr_cur_prefetch_siblings(block, cursor->index(), mtr->trx);
@@ -4530,7 +4544,7 @@ btr_cur_optimistic_delete(
 			|| (first_rec != rec
 			    && rec_is_add_metadata(first_rec, *index));
 		if (UNIV_LIKELY(empty_table)) {
-			if (UNIV_LIKELY(!is_metadata && !flags)) {
+			if (UNIV_LIKELY(!is_metadata && !(flags & BTR_CREATE_FLAG))) {
 				lock_update_delete(block, rec);
 			}
 			btr_page_empty(block, buf_block_get_page_zip(block),
@@ -4567,7 +4581,7 @@ btr_cur_optimistic_delete(
 						  mtr);
 			goto func_exit;
 		} else {
-			if (!flags) {
+			if (!(flags & BTR_CREATE_FLAG)) {
 				lock_update_delete(block, rec);
 			}
 

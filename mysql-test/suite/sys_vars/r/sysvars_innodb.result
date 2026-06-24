@@ -454,6 +454,18 @@ NUMERIC_BLOCK_SIZE	NULL
 ENUM_VALUE_LIST	redundant,compact,dynamic
 READ_ONLY	NO
 COMMAND_LINE_ARGUMENT	REQUIRED
+VARIABLE_NAME	INNODB_DEFER_PURGE_MERGES
+SESSION_VALUE	NULL
+DEFAULT_VALUE	OFF
+VARIABLE_SCOPE	GLOBAL
+VARIABLE_TYPE	BOOLEAN
+VARIABLE_COMMENT	Defer B-tree page merges during purge to the end of the purge batch instead of attempting them per deleted record. The default OFF keeps the current behavior; ON lets an optimistic purge delete proceed on an under-full page and records the page for a single compression pass after the batch, avoiding the repeated failed merge attempts and pessimistic delete fallbacks under-full siblings would otherwise trigger
+NUMERIC_MIN_VALUE	NULL
+NUMERIC_MAX_VALUE	NULL
+NUMERIC_BLOCK_SIZE	NULL
+ENUM_VALUE_LIST	OFF,ON
+READ_ONLY	NO
+COMMAND_LINE_ARGUMENT	OPTIONAL
 VARIABLE_NAME	INNODB_DISABLE_SORT_FILE_CACHE
 SESSION_VALUE	NULL
 DEFAULT_VALUE	OFF

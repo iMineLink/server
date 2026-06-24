@@ -1,0 +1,811 @@
+--- index_lock_upgrade.result
++++ index_lock_upgrade,both_off_defer.reject
+@@ -29,7 +29,7 @@
+ 5
+ 
+ modify_tree_descend_t1_insert
+-11
++16
+ 
+ pessimistic_insert_calls_t1_insert
+ 6
+@@ -70,43 +70,43 @@
+ CALL show_index_stats(CONCAT('t1', '_update_null_to_notnull'));
+ 
+ n_index_lock_upgrades_t1_update_null_to_notnull
+-414
++6
+ 
+ need_opposite_intention_root_t1_update_null_to_notnull
+-414
++6
+ 
+ modify_tree_descend_t1_update_null_to_notnull
+-828
++18
+ 
+ pessimistic_insert_calls_t1_update_null_to_notnull
+-5
++6
+ 
+ pessimistic_delete_calls_t1_update_null_to_notnull
+ 0
+ 
+ pessimistic_update_calls_t1_update_null_to_notnull
+-414
++6
+ 
+ pessimistic_update_optim_err_underflows_t1_update_null_to_notnull
+-300
++0
+ 
+ pessimistic_update_optim_err_overflows_t1_update_null_to_notnull
+-114
++6
+ 
+ index_x_lock_calls_t1_update_null_to_notnull
+ 0
+ 
+ index_page_splits_t1_update_null_to_notnull
+-5
++6
+ 
+ index_page_merge_attempts_t1_update_null_to_notnull
+-300
++0
+ 
+ index_page_merge_successful_t1_update_null_to_notnull
+ 0
+ 
+ index_page_reorg_successful_t1_update_null_to_notnull
+-98
++40
+ 
+ index_page_discards_t1_update_null_to_notnull
+ 0
+@@ -164,28 +164,28 @@
+ CALL show_index_stats(CONCAT('t1', '_update_notnull_to_null'));
+ 
+ n_index_lock_upgrades_t1_update_notnull_to_null
+-380
++87
+ 
+ need_opposite_intention_root_t1_update_notnull_to_null
+-380
++422
+ 
+ modify_tree_descend_t1_update_notnull_to_null
+-760
++931
+ 
+ pessimistic_insert_calls_t1_update_notnull_to_null
+ 0
+ 
+ pessimistic_delete_calls_t1_update_notnull_to_null
+-5
++6
+ 
+ pessimistic_update_calls_t1_update_notnull_to_null
+-380
++422
+ 
+ pessimistic_update_optim_err_underflows_t1_update_notnull_to_null
+-311
++342
+ 
+ pessimistic_update_optim_err_overflows_t1_update_notnull_to_null
+-69
++80
+ 
+ index_x_lock_calls_t1_update_notnull_to_null
+ 0
+@@ -194,13 +194,13 @@
+ 0
+ 
+ index_page_merge_attempts_t1_update_notnull_to_null
+-311
++342
+ 
+ index_page_merge_successful_t1_update_notnull_to_null
+-5
++6
+ 
+ index_page_reorg_successful_t1_update_notnull_to_null
+-5
++6
+ 
+ index_page_discards_t1_update_notnull_to_null
+ 0
+@@ -215,19 +215,19 @@
+ CALL show_index_stats(CONCAT('t1', '_delete_upper_half'));
+ 
+ n_index_lock_upgrades_t1_delete_upper_half
+-183
++3
+ 
+ need_opposite_intention_root_t1_delete_upper_half
+-183
++4
+ 
+ modify_tree_descend_t1_delete_upper_half
+-366
++12
+ 
+ pessimistic_insert_calls_t1_delete_upper_half
+ 0
+ 
+ pessimistic_delete_calls_t1_delete_upper_half
+-186
++6
+ 
+ pessimistic_update_calls_t1_delete_upper_half
+ 0
+@@ -239,22 +239,22 @@
+ 0
+ 
+ index_x_lock_calls_t1_delete_upper_half
+-0
++1
+ 
+ index_page_splits_t1_delete_upper_half
+ 0
+ 
+ index_page_merge_attempts_t1_delete_upper_half
+-183
++1
+ 
+ index_page_merge_successful_t1_delete_upper_half
+-3
++0
+ 
+ index_page_reorg_successful_t1_delete_upper_half
+-3
++0
+ 
+ index_page_discards_t1_delete_upper_half
+-0
++3
+ 
+ # Delete even-numbered rows
+ DELETE FROM t1 WHERE id % 2 = 0;
+@@ -266,19 +266,19 @@
+ CALL show_index_stats(CONCAT('t1', '_delete_even'));
+ 
+ n_index_lock_upgrades_t1_delete_even
+-13
++0
+ 
+ need_opposite_intention_root_t1_delete_even
+-13
++2
+ 
+ modify_tree_descend_t1_delete_even
+-26
++6
+ 
+ pessimistic_insert_calls_t1_delete_even
+ 0
+ 
+ pessimistic_delete_calls_t1_delete_even
+-15
++2
+ 
+ pessimistic_update_calls_t1_delete_even
+ 0
+@@ -290,13 +290,13 @@
+ 0
+ 
+ index_x_lock_calls_t1_delete_even
+-0
++2
+ 
+ index_page_splits_t1_delete_even
+ 0
+ 
+ index_page_merge_attempts_t1_delete_even
+-13
++2
+ 
+ index_page_merge_successful_t1_delete_even
+ 2
+@@ -317,19 +317,19 @@
+ CALL show_index_stats(CONCAT('t1', '_delete_remaining'));
+ 
+ n_index_lock_upgrades_t1_delete_remaining
+-16
++1
+ 
+ need_opposite_intention_root_t1_delete_remaining
+-16
++1
+ 
+ modify_tree_descend_t1_delete_remaining
+-32
++3
+ 
+ pessimistic_insert_calls_t1_delete_remaining
+ 0
+ 
+ pessimistic_delete_calls_t1_delete_remaining
+-17
++2
+ 
+ pessimistic_update_calls_t1_delete_remaining
+ 0
+@@ -347,16 +347,16 @@
+ 0
+ 
+ index_page_merge_attempts_t1_delete_remaining
+-16
++0
+ 
+ index_page_merge_successful_t1_delete_remaining
+-2
++0
+ 
+ index_page_reorg_successful_t1_delete_remaining
+-1
++0
+ 
+ index_page_discards_t1_delete_remaining
+-0
++1
+ 
+ DROP TABLE t1;
+ # Test with table t2 (primary key + secondary index on dt)
+@@ -386,7 +386,7 @@
+ 7
+ 
+ modify_tree_descend_t2_insert
+-18
++23
+ 
+ pessimistic_insert_calls_t2_insert
+ 9
+@@ -427,43 +427,43 @@
+ CALL show_index_stats(CONCAT('t2', '_update_null_to_notnull'));
+ 
+ n_index_lock_upgrades_t2_update_null_to_notnull
+-1016
++13
+ 
+ need_opposite_intention_root_t2_update_null_to_notnull
+-1016
++13
+ 
+ modify_tree_descend_t2_update_null_to_notnull
+-2036
++39
+ 
+ pessimistic_insert_calls_t2_update_null_to_notnull
+-9
++10
+ 
+ pessimistic_delete_calls_t2_update_null_to_notnull
+-601
++6
+ 
+ pessimistic_update_calls_t2_update_null_to_notnull
+-414
++6
+ 
+ pessimistic_update_optim_err_underflows_t2_update_null_to_notnull
+-300
++0
+ 
+ pessimistic_update_optim_err_overflows_t2_update_null_to_notnull
+-114
++6
+ 
+ index_x_lock_calls_t2_update_null_to_notnull
+ 0
+ 
+ index_page_splits_t2_update_null_to_notnull
+-9
++10
+ 
+ index_page_merge_attempts_t2_update_null_to_notnull
+-895
++0
+ 
+ index_page_merge_successful_t2_update_null_to_notnull
+ 0
+ 
+ index_page_reorg_successful_t2_update_null_to_notnull
+-98
++40
+ 
+ index_page_discards_t2_update_null_to_notnull
+ 3
+@@ -474,19 +474,19 @@
+ CALL show_index_stats(CONCAT('t2', '_update_inplace'));
+ 
+ n_index_lock_upgrades_t2_update_inplace
+-551
++7
+ 
+ need_opposite_intention_root_t2_update_inplace
+-551
++7
+ 
+ modify_tree_descend_t2_update_inplace
+-1105
++21
+ 
+ pessimistic_insert_calls_t2_update_inplace
+ 3
+ 
+ pessimistic_delete_calls_t2_update_inplace
+-552
++8
+ 
+ pessimistic_update_calls_t2_update_inplace
+ 0
+@@ -504,7 +504,7 @@
+ 3
+ 
+ index_page_merge_attempts_t2_update_inplace
+-544
++0
+ 
+ index_page_merge_successful_t2_update_inplace
+ 0
+@@ -521,28 +521,28 @@
+ CALL show_index_stats(CONCAT('t2', '_update_notnull_to_null'));
+ 
+ n_index_lock_upgrades_t2_update_notnull_to_null
+-583
++94
+ 
+ need_opposite_intention_root_t2_update_notnull_to_null
+-583
++429
+ 
+ modify_tree_descend_t2_update_notnull_to_null
+-1169
++952
+ 
+ pessimistic_insert_calls_t2_update_notnull_to_null
+ 3
+ 
+ pessimistic_delete_calls_t2_update_notnull_to_null
+-209
++14
+ 
+ pessimistic_update_calls_t2_update_notnull_to_null
+-380
++422
+ 
+ pessimistic_update_optim_err_underflows_t2_update_notnull_to_null
+-311
++342
+ 
+ pessimistic_update_optim_err_overflows_t2_update_notnull_to_null
+-69
++80
+ 
+ index_x_lock_calls_t2_update_notnull_to_null
+ 0
+@@ -551,16 +551,16 @@
+ 3
+ 
+ index_page_merge_attempts_t2_update_notnull_to_null
+-511
++342
+ 
+ index_page_merge_successful_t2_update_notnull_to_null
+-9
++6
+ 
+ index_page_reorg_successful_t2_update_notnull_to_null
+-10
++7
+ 
+ index_page_discards_t2_update_notnull_to_null
+-0
++4
+ 
+ # Delete upper half of rows
+ DELETE FROM t2 WHERE id > (SELECT MAX(id) FROM t2) DIV 2;
+@@ -572,19 +572,19 @@
+ CALL show_index_stats(CONCAT('t2', '_delete_upper_half'));
+ 
+ n_index_lock_upgrades_t2_delete_upper_half
+-340
++4
+ 
+ need_opposite_intention_root_t2_delete_upper_half
+-340
++6
+ 
+ modify_tree_descend_t2_delete_upper_half
+-680
++18
+ 
+ pessimistic_insert_calls_t2_delete_upper_half
+ 0
+ 
+ pessimistic_delete_calls_t2_delete_upper_half
+-344
++8
+ 
+ pessimistic_update_calls_t2_delete_upper_half
+ 0
+@@ -596,22 +596,22 @@
+ 0
+ 
+ index_x_lock_calls_t2_delete_upper_half
+-0
++2
+ 
+ index_page_splits_t2_delete_upper_half
+ 0
+ 
+ index_page_merge_attempts_t2_delete_upper_half
+-340
++2
+ 
+ index_page_merge_successful_t2_delete_upper_half
+-4
++0
+ 
+ index_page_reorg_successful_t2_delete_upper_half
+-4
++0
+ 
+ index_page_discards_t2_delete_upper_half
+-0
++4
+ 
+ # Delete even-numbered rows
+ DELETE FROM t2 WHERE id % 2 = 0;
+@@ -623,19 +623,19 @@
+ CALL show_index_stats(CONCAT('t2', '_delete_even'));
+ 
+ n_index_lock_upgrades_t2_delete_even
+-15
++0
+ 
+ need_opposite_intention_root_t2_delete_even
+-15
++4
+ 
+ modify_tree_descend_t2_delete_even
+-30
++12
+ 
+ pessimistic_insert_calls_t2_delete_even
+ 0
+ 
+ pessimistic_delete_calls_t2_delete_even
+-18
++3
+ 
+ pessimistic_update_calls_t2_delete_even
+ 0
+@@ -647,13 +647,13 @@
+ 0
+ 
+ index_x_lock_calls_t2_delete_even
+-0
++4
+ 
+ index_page_splits_t2_delete_even
+ 0
+ 
+ index_page_merge_attempts_t2_delete_even
+-15
++4
+ 
+ index_page_merge_successful_t2_delete_even
+ 4
+@@ -674,19 +674,19 @@
+ CALL show_index_stats(CONCAT('t2', '_delete_remaining'));
+ 
+ n_index_lock_upgrades_t2_delete_remaining
+-16
++1
+ 
+ need_opposite_intention_root_t2_delete_remaining
+-16
++1
+ 
+ modify_tree_descend_t2_delete_remaining
+-32
++3
+ 
+ pessimistic_insert_calls_t2_delete_remaining
+ 0
+ 
+ pessimistic_delete_calls_t2_delete_remaining
+-17
++2
+ 
+ pessimistic_update_calls_t2_delete_remaining
+ 0
+@@ -704,16 +704,16 @@
+ 0
+ 
+ index_page_merge_attempts_t2_delete_remaining
+-16
++0
+ 
+ index_page_merge_successful_t2_delete_remaining
+-2
++0
+ 
+ index_page_reorg_successful_t2_delete_remaining
+-1
++0
+ 
+ index_page_discards_t2_delete_remaining
+-0
++1
+ 
+ DROP TABLE t2;
+ # Test with table t3 (primary key + secondary index on dt, ROW_FORMAT=COMPRESSED)
+@@ -743,7 +743,7 @@
+ 10
+ 
+ modify_tree_descend_t3_insert
+-24
++32
+ 
+ pessimistic_insert_calls_t3_insert
+ 12
+@@ -784,25 +784,25 @@
+ CALL show_index_stats(CONCAT('t3', '_update_null_to_notnull'));
+ 
+ n_index_lock_upgrades_t3_update_null_to_notnull
+-1602
++15
+ 
+ need_opposite_intention_root_t3_update_null_to_notnull
+-1602
++15
+ 
+ modify_tree_descend_t3_update_null_to_notnull
+-3208
++45
+ 
+ pessimistic_insert_calls_t3_update_null_to_notnull
+ 12
+ 
+ pessimistic_delete_calls_t3_update_null_to_notnull
+-602
++6
+ 
+ pessimistic_update_calls_t3_update_null_to_notnull
+-1000
++8
+ 
+ pessimistic_update_optim_err_underflows_t3_update_null_to_notnull
+-992
++0
+ 
+ pessimistic_update_optim_err_overflows_t3_update_null_to_notnull
+ 0
+@@ -814,10 +814,10 @@
+ 12
+ 
+ index_page_merge_attempts_t3_update_null_to_notnull
+-1587
++0
+ 
+ index_page_merge_successful_t3_update_null_to_notnull
+-1
++0
+ 
+ index_page_reorg_successful_t3_update_null_to_notnull
+ 0
+@@ -831,19 +831,19 @@
+ CALL show_index_stats(CONCAT('t3', '_update_inplace'));
+ 
+ n_index_lock_upgrades_t3_update_inplace
+-551
++7
+ 
+ need_opposite_intention_root_t3_update_inplace
+-551
++7
+ 
+ modify_tree_descend_t3_update_inplace
+-1105
++21
+ 
+ pessimistic_insert_calls_t3_update_inplace
+ 3
+ 
+ pessimistic_delete_calls_t3_update_inplace
+-552
++8
+ 
+ pessimistic_update_calls_t3_update_inplace
+ 0
+@@ -861,7 +861,7 @@
+ 3
+ 
+ index_page_merge_attempts_t3_update_inplace
+-544
++0
+ 
+ index_page_merge_successful_t3_update_inplace
+ 0
+@@ -878,19 +878,19 @@
+ CALL show_index_stats(CONCAT('t3', '_update_notnull_to_null'));
+ 
+ n_index_lock_upgrades_t3_update_notnull_to_null
+-1203
++41
+ 
+ need_opposite_intention_root_t3_update_notnull_to_null
+-1203
++1007
+ 
+ modify_tree_descend_t3_update_notnull_to_null
+-2409
++2055
+ 
+ pessimistic_insert_calls_t3_update_notnull_to_null
+ 3
+ 
+ pessimistic_delete_calls_t3_update_notnull_to_null
+-212
++17
+ 
+ pessimistic_update_calls_t3_update_notnull_to_null
+ 1000
+@@ -908,16 +908,16 @@
+ 3
+ 
+ index_page_merge_attempts_t3_update_notnull_to_null
+-1200
++1000
+ 
+ index_page_merge_successful_t3_update_notnull_to_null
+-12
++9
+ 
+ index_page_reorg_successful_t3_update_notnull_to_null
+ 0
+ 
+ index_page_discards_t3_update_notnull_to_null
+-0
++4
+ 
+ # Delete upper half of rows
+ DELETE FROM t3 WHERE id > (SELECT MAX(id) FROM t3) DIV 2;
+@@ -929,19 +929,19 @@
+ CALL show_index_stats(CONCAT('t3', '_delete_upper_half'));
+ 
+ n_index_lock_upgrades_t3_delete_upper_half
+-450
++5
+ 
+ need_opposite_intention_root_t3_delete_upper_half
+-450
++7
+ 
+ modify_tree_descend_t3_delete_upper_half
+-900
++21
+ 
+ pessimistic_insert_calls_t3_delete_upper_half
+ 0
+ 
+ pessimistic_delete_calls_t3_delete_upper_half
+-455
++10
+ 
+ pessimistic_update_calls_t3_delete_upper_half
+ 0
+@@ -953,22 +953,22 @@
+ 0
+ 
+ index_x_lock_calls_t3_delete_upper_half
+-0
++2
+ 
+ index_page_splits_t3_delete_upper_half
+ 0
+ 
+ index_page_merge_attempts_t3_delete_upper_half
+-450
++2
+ 
+ index_page_merge_successful_t3_delete_upper_half
+-5
++0
+ 
+ index_page_reorg_successful_t3_delete_upper_half
+ 0
+ 
+ index_page_discards_t3_delete_upper_half
+-0
++5
+ 
+ # Delete even-numbered rows
+ DELETE FROM t3 WHERE id % 2 = 0;
+@@ -980,19 +980,19 @@
+ CALL show_index_stats(CONCAT('t3', '_delete_even'));
+ 
+ n_index_lock_upgrades_t3_delete_even
+-123
++0
+ 
+ need_opposite_intention_root_t3_delete_even
+-123
++7
+ 
+ modify_tree_descend_t3_delete_even
+-246
++21
+ 
+ pessimistic_insert_calls_t3_delete_even
+ 0
+ 
+ pessimistic_delete_calls_t3_delete_even
+-125
++2
+ 
+ pessimistic_update_calls_t3_delete_even
+ 0
+@@ -1004,13 +1004,13 @@
+ 0
+ 
+ index_x_lock_calls_t3_delete_even
+-0
++7
+ 
+ index_page_splits_t3_delete_even
+ 0
+ 
+ index_page_merge_attempts_t3_delete_even
+-123
++7
+ 
+ index_page_merge_successful_t3_delete_even
+ 3
+@@ -1031,19 +1031,19 @@
+ CALL show_index_stats(CONCAT('t3', '_delete_remaining'));
+ 
+ n_index_lock_upgrades_t3_delete_remaining
+-89
++3
+ 
+ need_opposite_intention_root_t3_delete_remaining
+-89
++3
+ 
+ modify_tree_descend_t3_delete_remaining
+-178
++9
+ 
+ pessimistic_insert_calls_t3_delete_remaining
+ 0
+ 
+ pessimistic_delete_calls_t3_delete_remaining
+-92
++6
+ 
+ pessimistic_update_calls_t3_delete_remaining
+ 0
+@@ -1061,15 +1061,15 @@
+ 0
+ 
+ index_page_merge_attempts_t3_delete_remaining
+-89
++0
+ 
+ index_page_merge_successful_t3_delete_remaining
+-4
++0
+ 
+ index_page_reorg_successful_t3_delete_remaining
+ 0
+ 
+ index_page_discards_t3_delete_remaining
+-0
++3
+ 
+ DROP TABLE t3;

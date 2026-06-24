@@ -1,50 +1,65 @@
-# MDEV-38814: exercise the cross-product of the two independent gates that
-# reduce index tree lock SX-to-X upgrades, innodb_index_shrink and
-# innodb_index_lock_upgrade_root. Each combination sets both variables; the
+# MDEV-38814 / MDEV-39325: exercise the cross-product of the three independent
+# gates that reduce index tree lock SX-to-X upgrades and the merge/split churn
+# behind them: innodb_index_shrink, innodb_index_lock_upgrade_root and
+# innodb_defer_purge_merges. Each combination sets all three explicitly; the
 # first ([on]) is the all-legacy baseline recorded as the base .result, the
 # rest are recorded as rdiffs against it.
 #
-# innodb_index_shrink=OFF: all DB_UNDERFLOW fallbacks on growing records are
-# eliminated, DB_OVERFLOW fallbacks on growing records are forced to split when
-# the page cannot satisfy BTR_CUR_PAGE_REORGANIZE_LIMIT, and the index-lock
-# upgrade count drops accordingly on the same workload. Same-size record
-# UPDATEs are unaffected. Shrinking-record UPDATEs are marginally affected,
-# because they occur after the record-growing UPDATEs and an extra page is
-# produced via split as a side-effect, so they operate on a slightly different
-# B-tree.
+# innodb_index_shrink=OFF: growing-record UPDATEs are not re-merged after the
+# delete-then-insert (no DB_UNDERFLOW fallback) and DB_OVERFLOW fallbacks are
+# forced to split rather than reorganize; the grow-update upgrade count drops
+# sharply. Same-size and shrinking UPDATEs are essentially unaffected.
 #
 # innodb_index_lock_upgrade_root=OFF: btr_cur_need_opposite_intention() returns
-# false for the root page (which has no parent or siblings, so a structural
-# change cannot cascade upward), removing the SX-to-X upgrades that the root
-# would otherwise force. need_opposite_intention_root counts the root
-# encounters either way; n_index_lock_upgrades is what drops.
+# false for the root page (no parent or siblings, so a structural change cannot
+# cascade upward), removing the SX-to-X upgrades the root would otherwise force.
+# This is the main lever for shrinking-record UPDATEs; it costs a few extra page
+# descents because the optimistic descent no longer bails at the root.
 #
-# Compressed pages (t3) get the innodb_index_shrink optimistic-side change but
-# not the pessimistic-side one, by design. The optimistic gate
-# (page_get_data_size vs BTR_CUR_PAGE_COMPRESS_LIMIT) is an uncompressed-frame
-# metric that translates cleanly to compressed pages, so it applies uniformly.
-# The pessimistic gate (page_get_max_insert_size_after_reorganize vs
-# BTR_CUR_PAGE_REORGANIZE_LIMIT) is also an uncompressed-frame metric, but the
-# actual constraint on a compressed page is whether the compressed image fits
-# in KEY_BLOCK_SIZE after recompress, a different question. Using the
-# uncompressed metric there would mispredict in both directions, so
-# btr_cur_pessimistic_update() falls through to the legacy
-# btr_cur_insert_if_possible() path, which already handles compressed-page
-# complexity. The innodb_index_lock_upgrade_root gate is page-position based
-# (root vs non-root) and therefore applies uniformly to t3.
+# innodb_defer_purge_merges=ON: purge does not attempt a page merge per deleted
+# record; under-full pages are recorded and compressed once at the end of the
+# batch. This removes the excessive failed purge merge attempts (and the
+# pessimistic delete fallbacks / upgrades they drive) on the delete phases and
+# on secondary-key in-place UPDATEs (which churn the secondary index via
+# delete+insert and are purged afterwards). It is orthogonal to the two
+# update-path gates above.
 
 [on]
 --loose-innodb-index-shrink=ON
 --loose-innodb-index-lock-upgrade-root=ON
+--loose-innodb-defer-purge-merges=OFF
 
 [shrink_off]
 --loose-innodb-index-shrink=OFF
 --loose-innodb-index-lock-upgrade-root=ON
+--loose-innodb-defer-purge-merges=OFF
 
 [root_off]
 --loose-innodb-index-shrink=ON
 --loose-innodb-index-lock-upgrade-root=OFF
+--loose-innodb-defer-purge-merges=OFF
 
 [both_off]
 --loose-innodb-index-shrink=OFF
 --loose-innodb-index-lock-upgrade-root=OFF
+--loose-innodb-defer-purge-merges=OFF
+
+[defer]
+--loose-innodb-index-shrink=ON
+--loose-innodb-index-lock-upgrade-root=ON
+--loose-innodb-defer-purge-merges=ON
+
+[shrink_off_defer]
+--loose-innodb-index-shrink=OFF
+--loose-innodb-index-lock-upgrade-root=ON
+--loose-innodb-defer-purge-merges=ON
+
+[root_off_defer]
+--loose-innodb-index-shrink=ON
+--loose-innodb-index-lock-upgrade-root=OFF
+--loose-innodb-defer-purge-merges=ON
+
+[both_off_defer]
+--loose-innodb-index-shrink=OFF
+--loose-innodb-index-lock-upgrade-root=OFF
+--loose-innodb-defer-purge-merges=ON

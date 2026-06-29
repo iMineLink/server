@@ -7211,11 +7211,17 @@ ha_innobase::build_template(
 	ibool		fetch_all_in_key	= FALSE;
 	ibool		fetch_primary_key_cols	= FALSE;
 
-	if (m_prebuilt->select_lock_type == LOCK_X || m_prebuilt->table->no_rollback()) {
+	if (m_prebuilt->select_lock_type != LOCK_NONE || m_prebuilt->table->no_rollback()) {
 		/* We always retrieve the whole clustered index record if we
-		use exclusive row level locks, for example, if the read is
-		done in an UPDATE statement or if we are using a no rollback
-                table */
+		take row level locks, for example, if the read is done in an
+		UPDATE statement or in SELECT ... FOR UPDATE / LOCK IN SHARE
+		MODE, or if we are using a no rollback table. Accessing the
+		clustered index is what places the lock on the row itself; a
+		covering secondary index would otherwise lock only the
+		secondary index records, which both leaves the row unlocked
+		against concurrent exclusive lockers reaching it through
+		another index and makes the set of returned rows depend on the
+		chosen index path (MDEV-40187). */
 
 		whole_row = true;
 	} else if (!whole_row) {

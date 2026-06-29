@@ -1,0 +1,69 @@
+--source include/have_innodb.inc
+--source include/count_sessions.inc
+
+#
+# MDEV-40187: SELECT ... LOCK IN SHARE MODE misses rows depending on
+# index path after lock wait recovery.
+#
+# A locking read on the secondary index idx_c0(c0) blocks on a record held
+# by another transaction. While it is blocked, that other transaction
+# inserts further rows and commits. After the lock wait is released the
+# resumed scan returns only a subset of the committed rows, even though the
+# query is WHERE TRUE and no row was deleted. Forcing PRIMARY or c1 returns
+# every row, so the logical result wrongly depends on the chosen index path.
+#
+
+CREATE TABLE t0 (
+  c0 DOUBLE ZEROFILL UNIQUE PRIMARY KEY NOT NULL,
+  c1 BIGINT ZEROFILL UNIQUE
+) ENGINE=InnoDB;
+INSERT IGNORE INTO t0(c0, c1) VALUES(1.32728, 61);
+INSERT IGNORE INTO t0(c0, c1) VALUES(1.69376, 73), (1.32728, 31), (1.16039, 13);
+CREATE INDEX idx_c0 ON t0(c0);
+
+--echo # The default plan scans the smaller secondary index idx_c0.
+EXPLAIN SELECT DISTINCTROW t0.c0 FROM t0 WHERE TRUE LOCK IN SHARE MODE;
+
+--connect (con1,localhost,root,,)
+SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
+BEGIN;
+UPDATE IGNORE t0 SET c1=NULL WHERE TRUE;
+INSERT INTO t0(c0, c1) VALUES(1.68135, 15);
+
+--connect (con2,localhost,root,,)
+SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
+BEGIN;
+INSERT INTO t0(c0, c1) VALUES(9.00788833E8, 1);
+--send
+SELECT DISTINCTROW t0.c0 FROM t0 WHERE TRUE LOCK IN SHARE MODE;
+
+connection con1;
+let $wait_condition=
+  SELECT COUNT(*) = 1 FROM information_schema.innodb_trx
+  WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+
+INSERT INTO t0(c0, c1) VALUES(1.25715, 10), (1.38422, 6), (1.32932, 97);
+INSERT IGNORE INTO t0(c0, c1) VALUES(1.93502, 35);
+COMMIT;
+
+connection con2;
+--echo # [2-2] default index path (idx_c0, loose index scan): after the fix it
+--echo # returns all 9 committed rows, matching the FORCE INDEX results below.
+--echo # Before the fix the three [1-3] rows 1.25715, 1.32932, 1.38422 were
+--echo # missing because the covering scan locked only idx_c0 records and
+--echo # blocked late, past their insert positions.
+reap;
+COMMIT;
+
+--echo # FORCE INDEX(PRIMARY): expected full result
+SELECT DISTINCTROW t0.c0 FROM t0 FORCE INDEX(PRIMARY) WHERE TRUE LOCK IN SHARE MODE;
+--echo # FORCE INDEX(c1): expected full result
+SELECT DISTINCTROW t0.c0 FROM t0 FORCE INDEX(c1) WHERE TRUE LOCK IN SHARE MODE;
+
+connection default;
+disconnect con1;
+disconnect con2;
+
+DROP TABLE t0;
+--source include/wait_until_count_sessions.inc

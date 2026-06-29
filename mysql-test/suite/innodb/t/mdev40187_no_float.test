@@ -1,0 +1,69 @@
+--source include/have_innodb.inc
+--source include/count_sessions.inc
+
+#
+# MDEV-40187, integer-only reproduction (no floating point).
+#
+# The DOUBLE ZEROFILL key in the original report only serves to control key
+# ordering and to make the smaller secondary index idx_c0(c0) the default
+# scan path. Mapping the fractional keys to integers (xxxxx * 100000, and
+# the already-integral 9.00788833E8 = 900788833) preserves the ordering and
+# reproduces the very same row loss: the default idx_c0 path drops the three
+# rows inserted mid-wait, while FORCE INDEX(PRIMARY)/FORCE INDEX(c1) return
+# every committed row.
+#
+
+CREATE TABLE t0 (
+  c0 BIGINT UNSIGNED PRIMARY KEY,
+  c1 BIGINT UNSIGNED UNIQUE
+) ENGINE=InnoDB;
+INSERT IGNORE INTO t0(c0, c1) VALUES(132728, 61);
+INSERT IGNORE INTO t0(c0, c1) VALUES(169376, 73), (132728, 31), (116039, 13);
+CREATE INDEX idx_c0 ON t0(c0);
+
+--echo # The default plan scans the smaller secondary index idx_c0.
+EXPLAIN SELECT DISTINCTROW t0.c0 FROM t0 WHERE TRUE LOCK IN SHARE MODE;
+
+--connect (con1,localhost,root,,)
+SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
+BEGIN;
+UPDATE IGNORE t0 SET c1=NULL WHERE TRUE;
+INSERT INTO t0(c0, c1) VALUES(168135, 15);
+
+--connect (con2,localhost,root,,)
+SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
+BEGIN;
+INSERT INTO t0(c0, c1) VALUES(900788833, 1);
+--send
+SELECT DISTINCTROW t0.c0 FROM t0 WHERE TRUE LOCK IN SHARE MODE;
+
+connection con1;
+let $wait_condition=
+  SELECT COUNT(*) = 1 FROM information_schema.innodb_trx
+  WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+
+INSERT INTO t0(c0, c1) VALUES(125715, 10), (138422, 6), (132932, 97);
+INSERT IGNORE INTO t0(c0, c1) VALUES(193502, 35);
+COMMIT;
+
+connection con2;
+--echo # [2-2] default index path (idx_c0, loose index scan): after the fix it
+--echo # returns all 9 committed rows, matching the FORCE INDEX results below.
+--echo # Before the fix the three [1-3] rows 125715, 132932, 138422 were
+--echo # missing because the covering scan locked only idx_c0 records and
+--echo # blocked late, past their insert positions.
+reap;
+COMMIT;
+
+--echo # FORCE INDEX(PRIMARY): expected full result
+SELECT DISTINCTROW t0.c0 FROM t0 FORCE INDEX(PRIMARY) WHERE TRUE LOCK IN SHARE MODE;
+--echo # FORCE INDEX(c1): expected full result
+SELECT DISTINCTROW t0.c0 FROM t0 FORCE INDEX(c1) WHERE TRUE LOCK IN SHARE MODE;
+
+connection default;
+disconnect con1;
+disconnect con2;
+
+DROP TABLE t0;
+--source include/wait_until_count_sessions.inc

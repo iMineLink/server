@@ -1,0 +1,45 @@
+#
+# Reproduction of Marko's MDEV-37115 comment 1 (2025-07-02):
+# https://jira.mariadb.org/browse/MDEV-37115
+#
+# Forces pessimistic inserts (innodb_limit_optimistic_insert_debug=2) so the
+# tree is built up via page splits, giving a taller/wider B-tree than a
+# straight sequential-key bulk insert would. Then does a full reverse index
+# scan (ORDER BY a DESC on the PRIMARY KEY) and reads pages_accessed out of
+# ANALYZE FORMAT=JSON.
+#
+# How to use:
+#   1. Copy this file to mysql-test/main/mdev37115_repro.test in the branch
+#      you want to test.
+#   2. Run once with --record to create the initial .result (or just read
+#      the printed pages_accessed value from the test log/reject file):
+#        ./mysql-test/mtr --mem --record main.mdev37115_repro
+#   3. Compare the printed pages_accessed value across:
+#        - current main (has MDEV-37244, not MDEV-32067)          -> baseline
+#        - origin/main_MDEV-32067 (PR #4600)                       -> candidate fix
+#      Marko's original numbers (pre-MDEV-37244, pre-MDEV-32067) were:
+#        8,207   without his attempted fast-path fix (or fast-path fix + a
+#                large-enough buffer pool that holds all data)
+#        >=16,200 with the fast-path fix under mtr's default small buffer pool
+#      Since MDEV-37244 already changed page-lookup accounting, treat those
+#      two numbers as historical context, not an exact target -- the point of
+#      this run is to compare baseline vs. origin/main_MDEV-32067 on the SAME
+#      current code, not to reproduce the exact 2025-07 figures.
+#
+
+--source include/have_innodb.inc
+--source include/have_debug.inc
+--source include/have_sequence.inc
+
+SET @save_debug=@@GLOBAL.innodb_limit_optimistic_insert_debug;
+SET GLOBAL innodb_limit_optimistic_insert_debug=2;
+
+CREATE TEMPORARY TABLE t1(a INT NOT NULL PRIMARY KEY) ENGINE=InnoDB
+SELECT seq a FROM seq_1_to_16384;
+
+let $json=`ANALYZE FORMAT=JSON SELECT a FROM t1 ORDER BY a DESC`;
+evalp set @j='$json';
+select json_extract(@j, '$.query_block.nested_loop[0].table.r_engine_stats.pages_accessed');
+
+SET GLOBAL innodb_limit_optimistic_insert_debug=@save_debug;
+DROP TEMPORARY TABLE t1;

@@ -1288,6 +1288,164 @@ void btr_write_autoinc(trx_t *trx, dict_index_t *index, uint64_t autoinc,
   mtr.commit();
 }
 
+/** A small, buffer-pool-independent pool of scratch buf_block_t objects,
+used by btr_page_reorganize_low() and page_zip_reorganize() to hold a
+temporary, pre-rebuild copy of the page being reorganized. Obtaining one
+never takes buf_pool.mutex, so a free-list stall in buf_LRU_get_free_block()
+cannot prolong the X-latch the caller already holds on the real page.
+get() may still have to wait for another thread's put() once MAX_SLABS is
+reached, but that wait is bounded by how long some other reorganize takes,
+since get() is always the first thing a caller does and put() the last. */
+class btr_scratch_pool_t
+{
+  /** Number of scratch blocks per allocated slab.
+  At default 16KiB page size: ~1MiB per slab.
+  Worst case 64KiB page size: ~4MiB per slab. */
+  static constexpr size_t BLOCKS_PER_SLAB= 64;
+
+  /** Maximum number of slabs.
+  At default 16KiB page size: ~16MiB max.
+  Worst case 64KiB page size: ~64MiB max.
+  MAX_SLABS * BLOCKS_PER_SLAB currently 1024 determines the absolute
+  maximum number of concurrent reorganizations. */
+  static constexpr size_t MAX_SLABS= 16;
+
+  /** A pooled block, wrapped with intrusive free-list linkage.
+  block must be the first member: get()/put() hand out and take back a
+  buf_block_t*, and put() recovers the owning node_t by casting that
+  pointer back, exactly as buf_block_t itself relies on buf_page_t page
+  being its own first member (see the comment at its declaration).
+  alignas(CPU_LEVEL1_DCACHE_LINESIZE) both starts each node on a cache
+  line and pads sizeof(node_t) up to a whole number of cache lines, so
+  that two concurrently borrowed nodes never share a cache line (the
+  same layout guarantee that ut0pool.h enforces for its Element). */
+  struct alignas(CPU_LEVEL1_DCACHE_LINESIZE) node_t
+  {
+    buf_block_t block;
+    node_t *next_free;
+  };
+  static_assert(!(sizeof(node_t) % CPU_LEVEL1_DCACHE_LINESIZE),
+                "node_t must be a whole number of cache lines so that "
+                "adjacent pooled blocks cannot false-share");
+
+  struct slab_t
+  {
+    slab_t *next;
+    /** BLOCKS_PER_SLAB * srv_page_size bytes, aligned to srv_page_size */
+    byte *frames;
+    node_t nodes[BLOCKS_PER_SLAB];
+  };
+
+  mysql_mutex_t mutex;
+  /** Signaled by put() whenever a block is returned. */
+  pthread_cond_t block_freed;
+  slab_t *slabs= nullptr;
+  size_t n_slabs= 0;
+  /** Singly-linked stack of unused nodes. */
+  node_t *free_list= nullptr;
+
+  /** Allocate one more slab and push its nodes onto free_list, unless
+  MAX_SLABS was already reached.
+  @return whether a slab was allocated */
+  bool add_slab() noexcept
+  {
+    mysql_mutex_assert_owner(&mutex);
+
+    if (n_slabs >= MAX_SLABS)
+      return false;
+
+    slab_t *s= static_cast<slab_t*>
+      (aligned_malloc(sizeof(slab_t), alignof(slab_t)));
+    if (UNIV_UNLIKELY(!s))
+      return false;
+    memset(static_cast<void*>(s), 0, sizeof(slab_t));
+
+    s->frames= static_cast<byte*>
+      (aligned_malloc(BLOCKS_PER_SLAB * srv_page_size, srv_page_size));
+    if (UNIV_UNLIKELY(!s->frames))
+    {
+      aligned_free(s);
+      return false;
+    }
+
+    for (size_t i= 0; i < BLOCKS_PER_SLAB; i++)
+    {
+      node_t *node= &s->nodes[i];
+      node->block.page.frame= s->frames + i * srv_page_size;
+      node->block.page.lock.init();
+      node->block.page.set_state<false>(buf_page_t::MEMORY);
+      node->block.page.set_os_unused();
+      node->next_free= free_list;
+      free_list= node;
+    }
+
+    s->next= slabs;
+    slabs= s;
+    ++n_slabs;
+    return true;
+  }
+
+public:
+  void create() noexcept
+  {
+    mysql_mutex_init(PSI_NOT_INSTRUMENTED, &mutex, nullptr);
+    pthread_cond_init(&block_freed, nullptr);
+  }
+
+  void close() noexcept
+  {
+    for (slab_t *s= slabs; s; )
+    {
+      slab_t *next= s->next;
+      for (node_t &node : s->nodes)
+        node.block.page.lock.free();
+      aligned_free(s->frames);
+      aligned_free(s);
+      s= next;
+    }
+    slabs= nullptr;
+    n_slabs= 0;
+    free_list= nullptr;
+    pthread_cond_destroy(&block_freed);
+    mysql_mutex_destroy(&mutex);
+  }
+
+  /** @return a scratch block; never nullptr. Waits for one to be
+  returned by put() if the pool is at MAX_SLABS and none are free. */
+  buf_block_t *get() noexcept
+  {
+    mysql_mutex_lock(&mutex);
+    while (!free_list && !add_slab())
+      my_cond_wait(&block_freed, &mutex.m_mutex);
+    node_t *node= free_list;
+    free_list= node->next_free;
+    mysql_mutex_unlock(&mutex);
+    node->block.page.set_os_used();
+    return &node->block;
+  }
+
+  /** Return a block obtained from get(). */
+  void put(buf_block_t *block) noexcept
+  {
+    node_t *node= reinterpret_cast<node_t*>(block);
+    node->block.page.set_os_unused();
+    mysql_mutex_lock(&mutex);
+    node->next_free= free_list;
+    free_list= node;
+    pthread_cond_signal(&block_freed);
+    mysql_mutex_unlock(&mutex);
+  }
+};
+
+static btr_scratch_pool_t btr_scratch_pool;
+
+void btr_scratch_pool_init() noexcept { btr_scratch_pool.create(); }
+void btr_scratch_pool_close() noexcept { btr_scratch_pool.close(); }
+
+buf_block_t *btr_scratch_block_get() noexcept { return btr_scratch_pool.get(); }
+void btr_scratch_block_put(buf_block_t *block) noexcept
+{ btr_scratch_pool.put(block); }
+
 /** Reorganize an index page.
 @param cursor      index page cursor
 @param mtr         mini-transaction */
@@ -1312,7 +1470,7 @@ static dberr_t btr_page_reorganize_low(page_cur_t *cursor, mtr_t *mtr)
 
   btr_search_drop_page_hash_index(block, nullptr);
 
-  buf_block_t *old= buf_block_alloc();
+  buf_block_t *old= btr_scratch_block_get();
   /* Copy the old page to temporary space */
   memcpy_aligned<UNIV_PAGE_SIZE_MIN>(old->page.frame, block->page.frame,
                                      srv_page_size);
@@ -1550,7 +1708,7 @@ static dberr_t btr_page_reorganize_low(page_cur_t *cursor, mtr_t *mtr)
     }
   }
 
-  buf_block_free(old);
+  btr_scratch_block_put(old);
 
   MONITOR_INC(MONITOR_INDEX_REORG_ATTEMPTS);
   MONITOR_INC(MONITOR_INDEX_REORG_SUCCESSFUL);

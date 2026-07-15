@@ -680,6 +680,7 @@ public:
     ut_ad(!((prev_state ^ s) & LRU_MASK));
   }
 
+  template<bool must_own_buf_pool_mutex= true>
   inline void set_state(uint32_t s) noexcept;
   inline void set_corrupt_id() noexcept;
 
@@ -1796,9 +1797,11 @@ inline void page_hash_latch::lock() noexcept
 }
 #endif /* SUX_LOCK_GENERIC */
 
+template<bool must_own_buf_pool_mutex>
 inline void buf_page_t::set_state(uint32_t s) noexcept
 {
-  mysql_mutex_assert_owner(&buf_pool.mutex);
+  if constexpr (must_own_buf_pool_mutex)
+    mysql_mutex_assert_owner(&buf_pool.mutex);
   ut_ad(s <= REMOVE_HASH || s >= UNFIXED);
   ut_ad(s < WRITE_FIX);
   ut_ad(s <= READ_FIX + 1 || zip.fix == READ_FIX + 1);

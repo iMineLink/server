@@ -2914,6 +2914,7 @@ lock_move_reorganize_page(
     UT_LIST_INIT(old_locks, &lock_t::trx_locks);
 
     const page_id_t id{block->page.id()};
+    if (have_transactional_memory)
     {
       TMLockGuard g{lock_sys.rec_hash, id};
       if (!lock_sys_t::get_first(g.cell(), id))

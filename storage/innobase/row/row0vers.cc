@@ -178,6 +178,23 @@ row_vers_impl_x_locked_low(
 	modify rec, and does not necessarily have an implicit x-lock
 	on rec. */
 
+	/* Freeze purge_sys.view for the whole walk, because the row_build()
+	below dereferences the externally stored columns of a reconstructed
+	version, and the visibility check in trx_undo_prev_version_build()
+	only implies that their BLOB pages are allocated while purge cannot
+	advance that view. Note that trx may commit while we walk: it
+	deregisters itself from trx_sys before it waits for the reference we
+	hold, so without this its history could become purgeable under us.
+
+	The freeze, rather than the view that trx_undo_prev_version_build()
+	consults, is what makes the fetch safe here. Every undo log record
+	this walk applies was written by trx, because the loop only continues
+	while prev_trx_id is trx->id, and a fetch is only reached after
+	observing that trx has not committed. A view frozen before that
+	observation cannot see trx, so none of its undo log records can be
+	purged and no BLOB that they disowned can be freed. */
+	purge_sys_t::view_guard freeze{purge_sys_t::view_guard::VIEW};
+
 	for (const rec_t* version = clust_rec;; version = prev_version) {
 		row_ext_t*	ext;
 		dtuple_t*	row;
@@ -255,9 +272,14 @@ not_locked:
 		prev_trx_id = row_get_rec_trx_id(prev_version, clust_index,
 						 clust_offsets);
 
-		/* The stack of versions is locked by mtr.  Thus, it
-		is safe to fetch the prefixes for externally stored
-		columns. */
+		DEBUG_SYNC_C("before_row_vers_impl_x_locked_row_build");
+
+		/* The stack of versions is locked by mtr, and
+		purge_sys.view is frozen above.  Thus, it is safe to fetch
+		the prefixes for externally stored columns: the undo log
+		records that disowned them, including any that a newer
+		version disowned and this one merely inherited, cannot be
+		purged. */
 
 		row = row_build(ROW_COPY_POINTERS, clust_index, prev_version,
 				clust_offsets,

@@ -1443,6 +1443,12 @@ void purge_sys_t::batch_cleanup(const purge_sys_t::iterator &head)
   which is the only thread that can modify our inputs head, tail, view.
   Therefore, we only need to protect end_view from concurrent reads. */
 
+  /* end_view is only updated here, so it lags behind the records that this
+  batch purged. Leaving it where it is makes that lag last, which is the only
+  way to address from a test the window in which history is already gone while
+  a reader that consults end_view can still reconstruct it. */
+  const bool keep_end_view= DBUG_IF("purge_stale_end_view");
+
   /* Limit the end_view similar to what trx_purge_truncate_history() does. */
   const trx_id_t trx_no= head.trx_no ? head.trx_no : tail.trx_no;
 #ifdef SUX_LOCK_GENERIC
@@ -1451,8 +1457,11 @@ void purge_sys_t::batch_cleanup(const purge_sys_t::iterator &head)
   transactional_lock_guard<srw_spin_lock_low> g(end_latch);
 #endif
   this->head= head;
-  end_view= view;
-  end_view.clamp_low_limit_id(trx_no);
+  if (!keep_end_view)
+  {
+    end_view= view;
+    end_view.clamp_low_limit_id(trx_no);
+  }
 #ifdef SUX_LOCK_GENERIC
   end_latch.wr_unlock();
 #endif

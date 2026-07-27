@@ -1,0 +1,156 @@
+--source include/have_innodb.inc
+--source include/have_innodb_max_16k.inc
+--source include/have_debug_sync.inc
+
+--echo #
+--echo # MDEV-38056 An implicit-lock check must not reconstruct a version whose
+--echo # history purge has already processed. Here the undo log record is an
+--echo # update of a record that another, committed, transaction delete-marked,
+--echo # so it stores only the 20-byte reference to the externally stored
+--echo # column: nothing but the BLOB itself can supply those bytes, and purge
+--echo # is free to have freed it. Reaching that version requires the walk to
+--echo # consult purge_sys.end_view, which is only updated at the end of a purge
+--echo # batch and therefore lags behind what the batch already purged. Before
+--echo # the fix this hit buf_page_t* buf_page_get_zip(page_id_t): Assertion
+--echo # `bpage->state() >= buf_page_t::UNFIXED' failed.
+--echo #
+--echo # This is the case where no undo-log prefix exists, so freezing
+--echo # purge_sys.view is the only thing that can keep the dereference valid.
+--echo #
+
+--source include/wait_all_purged.inc
+
+CREATE TABLE t(a INT PRIMARY KEY, b TEXT, UNIQUE(b(700)))
+ENGINE=InnoDB STATS_PERSISTENT=0 ROW_FORMAT=COMPRESSED;
+
+INSERT INTO t VALUES (1, CONCAT('x', REPEAT('x', @@innodb_page_size)));
+
+# Filler rows whose UNIQUE(b(700)) keys sort between the 'x...' and 'z...'
+# values of row a=1, so that the delete-marked 'x...' secondary entry (which
+# purge removes) and the live 'z...' entry (which the reader latches) end up on
+# different secondary index leaf pages. On a shared page purge would block on
+# the reader's leaf latch and the old BLOB would never be freed.
+--disable_query_log
+let $i= 60;
+while ($i)
+{
+  eval INSERT INTO t VALUES (100 + $i,
+                             CONCAT('y~', LPAD($i, 3, '0'), REPEAT('-', 800)));
+  dec $i;
+}
+--enable_query_log
+
+SET GLOBAL innodb_monitor_enable='purge_del_mark_records';
+SET GLOBAL innodb_monitor_enable='purge_upd_exist_or_extern_records';
+
+# Stop purge_sys.end_view from advancing, so that the lag it inherently has
+# lasts long enough to be aimed at: below, history that a purge batch has
+# already removed must still look reconstructible to a reader that consults
+# end_view.
+SET GLOBAL debug_dbug='+d,purge_stale_end_view';
+
+# Pin purge so that the DELETE below stays unpurged until we choose.
+connect (purge_control,localhost,root,,);
+START TRANSACTION WITH CONSISTENT SNAPSHOT;
+
+connection default;
+# T1 delete-marks the row. The 'x...' BLOB is still owned by the record.
+DELETE FROM t WHERE a = 1;
+
+# T2 re-inserts the same PRIMARY KEY: an update of a delete-marked record. The
+# delete-marking was done by another transaction, so trx_undo_page_report_
+# modify() sets ignore_prefix and the undo log record stores only the 20-byte
+# reference to the 'x...' BLOB.
+connect (victim,localhost,root,,);
+BEGIN;
+INSERT INTO t VALUES (1, CONCAT('z', REPEAT('z', @@innodb_page_size)));
+
+# Let purge see T1 and remove the secondary index entry of the deleted 'x...'
+# value. Nobody holds the clustered index leaf yet, so purge is free to do it.
+# T2 is still active, so purge stops there, and end_view stays where it was.
+connection purge_control;
+COMMIT;
+disconnect purge_control;
+
+connection default;
+let $wait_condition=
+  SELECT count >= 1 FROM information_schema.innodb_metrics
+  WHERE name = 'purge_del_mark_records';
+--source include/wait_condition.inc
+
+# The reader references the active T2 for an implicit-lock check. end_view
+# cannot see T1, so it reconstructs the delete-marked 'x...' version, which
+# carries a bare 20-byte reference, and parks before dereferencing it.
+connect (reader,localhost,root,,);
+SET DEBUG_SYNC='before_row_vers_impl_x_locked_row_build SIGNAL parked WAIT_FOR resume';
+--send SELECT a FROM t FORCE INDEX(b) WHERE b LIKE 'z%' FOR UPDATE
+
+connection default;
+SET DEBUG_SYNC='now WAIT_FOR parked TIMEOUT 60';
+
+# T2 commits: it deregisters from trx_sys, which makes purgeable the undo log
+# record that disowned the 'x...' BLOB, and then spins waiting for the
+# reference the parked reader holds.
+connection victim;
+--send COMMIT
+
+connection default;
+# The parked reader holds purge_sys.latch, so purge cannot refresh its view and
+# that BLOB must still be allocated when the reader dereferences it. Give purge
+# every chance to free it, for as long as it would need without the fix (it
+# takes about a second there, so this waits five). The loop must stay: it is
+# what makes the assertion below fail rather than pass by accident when the
+# freeze is missing.
+--disable_query_log
+let $wait= 50;
+while ($wait)
+{
+  let $freed= `SELECT count FROM information_schema.innodb_metrics WHERE name = 'purge_upd_exist_or_extern_records'`;
+  if ($freed)
+  {
+    let $wait= 0;
+  }
+  if (!$freed)
+  {
+    real_sleep 0.1;
+    dec $wait;
+  }
+}
+--enable_query_log
+SELECT count AS externs_freed_while_parked FROM information_schema.innodb_metrics
+WHERE name = 'purge_upd_exist_or_extern_records';
+
+SET DEBUG_SYNC='now SIGNAL resume';
+
+connection victim;
+--reap
+connection reader;
+--reap
+
+connection default;
+disconnect reader;
+disconnect victim;
+SET GLOBAL debug_dbug='';
+SET DEBUG_SYNC='RESET';
+
+# Once the reader is done, purge is free to advance and to free that BLOB,
+# which confirms it was freeable all along and that only the frozen view held
+# purge back.
+let $wait_condition=
+  SELECT count >= 1 FROM information_schema.innodb_metrics
+  WHERE name = 'purge_upd_exist_or_extern_records';
+--source include/wait_condition.inc
+
+SELECT a FROM t FORCE INDEX(b) WHERE b LIKE 'zz%';
+CHECK TABLE t;
+DROP TABLE t;
+# Turn the monitors off, then zero their (server-lifetime cumulative) counters
+# so a later test on the same server sees a clean count, and restore the
+# monitor system variables to their defaults.
+SET GLOBAL innodb_monitor_disable='purge_del_mark_records';
+SET GLOBAL innodb_monitor_disable='purge_upd_exist_or_extern_records';
+SET GLOBAL innodb_monitor_reset_all='purge_del_mark_records';
+SET GLOBAL innodb_monitor_reset_all='purge_upd_exist_or_extern_records';
+SET GLOBAL innodb_monitor_enable=default;
+SET GLOBAL innodb_monitor_disable=default;
+SET GLOBAL innodb_monitor_reset_all=default;

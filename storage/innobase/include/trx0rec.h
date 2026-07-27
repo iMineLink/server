@@ -164,7 +164,12 @@ static constexpr ulint TRX_UNDO_PREV_IN_PURGE = 1;
 the undo log (which is the after image for an update) */
 static constexpr ulint TRX_UNDO_GET_OLD_V_VALUE = 2;
 
-/** indicate a call from row_undo_mod_sec_is_unsafe() */
+/** Indicate a call from row_undo_mod_sec_is_unsafe(), which derives secondary
+index entries from the reconstructed version and therefore dereferences its
+externally stored columns. The caller must hold purge_sys.latch in shared mode
+for as long as it uses the version, so that purge_sys.view cannot advance and
+the BLOB pages the version references cannot be freed; see
+purge_sys_t::view_guard::VIEW_HELD. */
 static constexpr ulint TRX_UNDO_CHECK_PURGEABILITY = 4;
 
 /** indicate a call from row_purge_is_unsafe() */

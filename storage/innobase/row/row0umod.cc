@@ -519,6 +519,13 @@ static bool row_undo_mod_sec_is_unsafe(const rec_t *rec, dict_index_t *index,
 
 	version = rec;
 
+	/* Freeze purge_sys.view for the whole walk. The visibility check in
+	trx_undo_prev_version_build() only implies that the externally stored
+	columns of a reconstructed version are still allocated while purge
+	cannot advance that view, and the row_build() below dereferences
+	them. */
+	purge_sys_t::view_guard freeze{purge_sys_t::view_guard::VIEW};
+
 	for (;;) {
 		heap2 = heap;
 		heap = mem_heap_create(1024);
@@ -566,9 +573,14 @@ nochange_index:
 		if (!rec_get_deleted_flag(prev_version, comp)) {
 			row_ext_t*	ext;
 
-			/* The stack of versions is locked by mtr.
-			Thus, it is safe to fetch the prefixes for
-			externally stored columns. */
+			DEBUG_SYNC_C("before_row_undo_mod_sec_is_unsafe_row_build");
+
+			/* The stack of versions is locked by mtr, and
+			purge_sys.view is frozen above. Thus, it is safe to
+			fetch the prefixes for externally stored columns:
+			the undo log records that disowned them, including
+			any that a newer version disowned and this one merely
+			inherited, cannot be purged. */
 			row = row_build(ROW_COPY_POINTERS, clust_index,
 					prev_version, clust_offsets,
 					NULL, NULL, NULL, &ext, heap);

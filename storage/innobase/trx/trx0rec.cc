@@ -2187,7 +2187,7 @@ dberr_t trx_undo_prev_version_build(const rec_t *rec, dict_index_t *index,
   purge_sys_t::view_guard check{v_status == TRX_UNDO_CHECK_PURGE_PAGES
                                 ? purge_sys_t::view_guard::PURGE
                                 : v_status == TRX_UNDO_CHECK_PURGEABILITY
-                                ? purge_sys_t::view_guard::VIEW
+                                ? purge_sys_t::view_guard::VIEW_HELD
                                 : purge_sys_t::view_guard::END_VIEW};
   if (!check.view().changes_visible(rec_trx_id))
   {
@@ -2256,16 +2256,23 @@ static dberr_t trx_undo_prev_version(const rec_t *rec, dict_index_t *index,
 	cannot have purged the BLOBs referenced by that version
 	yet).
 
-	This function does not fetch any BLOBs.  The callers might, by
-	possibly invoking row_ext_create() via row_build().  However,
-	they should have all needed information in the *old_vers
-	returned by this function.  This is because *old_vers is based
-	on the transaction undo log records.  The function
-	trx_undo_page_fetch_ext() will write BLOB prefixes to the
-	transaction undo log that are at least as long as the longest
-	possible column prefix in a secondary index.  Thus, secondary
-	index entries for *old_vers can be constructed without
-	dereferencing any BLOB pointers. */
+	This function does not fetch any BLOBs, but the callers might,
+	by invoking row_ext_create() via row_build().  Both (a) and (b)
+	are statements about purge_sys.view, so they hold only for as
+	long as that view cannot advance: a version is reconstructed
+	here only from the undo log record of a transaction that the
+	view does not see, and purging that same undo log record is what
+	frees the externally stored columns of the version.  This covers
+	a column whose reference the version merely inherited, because
+	reaching that version requires every transaction whose undo log
+	record was applied on the way down to be invisible to the same
+	view, and the record that disowned the reference is one of them.
+
+	A caller that dereferences those columns must therefore keep the
+	view frozen across the dereference, by holding purge_sys.latch
+	for as long as it uses the version (see
+	TRX_UNDO_CHECK_PURGEABILITY), or by being a purge task, whose
+	view is frozen for the whole batch. */
 
 	ptr = trx_undo_rec_skip_row_ref(ptr, index);
 
@@ -2283,11 +2290,15 @@ static dberr_t trx_undo_prev_version(const rec_t *rec, dict_index_t *index,
 		long as the undo log records have not been freed yet.
 
 		However, BLOBs are only safe to access as long as the
-		purge_sys.view does not permit them to be freed. The
-		check.latch will freeze the purge_sys.view by blocking
+		purge_sys.view does not permit them to be freed.
+		purge_sys.latch, held by the VIEW and VIEW_HELD guards,
+		freezes that view by blocking
 		purge_sys.clone_oldest_view() at the start of
-		trx_purge() or by blocking purge_sys.batch_cleanup()
-		at the end of trx_purge(). */
+		trx_purge(). purge_sys.end_latch does not: it only
+		blocks purge_sys.batch_cleanup() at the end of
+		trx_purge(), by which time the undo log records of the
+		batch have been purged and the BLOBs they disowned are
+		already freed. */
 		if (check.is_extended() && purge_sys.is_purgeable(trx_id)) {
 			return DB_SUCCESS;
 		}

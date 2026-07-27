@@ -1,0 +1,137 @@
+--source include/have_innodb.inc
+--source include/have_innodb_max_16k.inc
+--source include/have_debug_sync.inc
+
+--echo #
+--echo # MDEV-38056 The ROLLBACK counterpart of innodb.old_blob (compare
+--echo # MDEV-37189): row_undo_mod_sec_is_unsafe() reconstructs old versions of
+--echo # a ROW_FORMAT=COMPRESSED record and dereferences their externally stored
+--echo # columns, so it must keep purge_sys.view frozen until it is done. It
+--echo # already consulted that view, but only while trx_undo_prev_version_
+--echo # build() ran, and purge was free to advance and to free the BLOB pages
+--echo # before the caller fetched them. Before the fix this hit
+--echo # buf_page_t* buf_page_get_zip(page_id_t): Assertion
+--echo # `bpage->state() >= buf_page_t::UNFIXED' failed.
+--echo #
+
+--source include/wait_all_purged.inc
+
+CREATE TABLE t(a INT PRIMARY KEY, b TEXT, UNIQUE(b(700)))
+ENGINE=InnoDB STATS_PERSISTENT=0 ROW_FORMAT=COMPRESSED;
+
+INSERT INTO t VALUES (1, CONCAT('x', REPEAT('x', @@innodb_page_size)));
+
+# Filler rows whose UNIQUE(b(700)) keys sort between the 'y...' and 'z...'
+# values that row a=1 takes below, so that the delete-marked 'x...' secondary
+# entry (which purge removes) and the live 'z...' entry (which the rollback
+# latches) end up on different secondary index leaf pages. On a shared page
+# purge would block on the rollback's leaf latch and the old BLOB would never
+# be freed.
+--disable_query_log
+let $i= 60;
+while ($i)
+{
+  eval INSERT INTO t VALUES (100 + $i,
+                             CONCAT('y~', LPAD($i, 3, '0'), REPEAT('-', 800)));
+  dec $i;
+}
+--enable_query_log
+
+SET GLOBAL innodb_monitor_enable='purge_upd_exist_or_extern_records';
+
+# Pin a read view on the 'x...' committed state so that purge cannot free the
+# old BLOB disowned by the committed 'x...' -> 'y...' update until we release
+# it.
+connect (purge_control,localhost,root,,);
+START TRANSACTION WITH CONSISTENT SNAPSHOT;
+
+connection default;
+# Committed update: disowns the 'x...' BLOB (freeable once purge_control's
+# view is gone) and delete-marks the 'x...' secondary entry.
+UPDATE t SET b = CONCAT('y', REPEAT('y', @@innodb_page_size)) WHERE a = 1;
+
+# The transaction that will roll back: its UPDATE delete-marks the 'y...'
+# secondary entry and inserts the live 'z...' entry.
+connect (victim,localhost,root,,);
+BEGIN;
+UPDATE t SET b = CONCAT('z', REPEAT('z', @@innodb_page_size)) WHERE a = 1;
+
+# On ROLLBACK, row_undo_mod_upd_exist_sec() removes the 'z...' secondary
+# entry and, in row_undo_mod_sec_is_unsafe(), walks the clustered index
+# version chain 'z...' -> 'y...' -> 'x...', rebuilding each non-delete-marked
+# version and dereferencing its BLOB. Park before each row_build().
+# EXECUTE 2: the version walk calls row_build() once for the 'y...' version and
+# once for the 'x...' version; park at both (default EXECUTE 1 would disarm
+# after the first build and let the 'x...' build run unparked).
+SET DEBUG_SYNC='before_row_undo_mod_sec_is_unsafe_row_build SIGNAL parked WAIT_FOR resume EXECUTE 2';
+--send ROLLBACK
+
+connection default;
+# First hit: the 'y...' version. Its BLOB is owned by the still-open (rolling
+# back) transaction and can never be freed by purge; let the rebuild proceed.
+SET DEBUG_SYNC='now WAIT_FOR parked TIMEOUT 60';
+SET DEBUG_SYNC='now SIGNAL resume';
+
+# Second hit: the 'x...' version, whose disowned BLOB is the freeable one.
+SET DEBUG_SYNC='now WAIT_FOR parked TIMEOUT 60';
+
+# Release the read view, which is the last thing that kept the 'x...' BLOB
+# from being freeable. The rollback is parked holding purge_sys.latch, so purge
+# cannot refresh its view to one that sees the committed update, and the BLOB
+# must still be allocated when the rollback dereferences it.
+connection purge_control;
+COMMIT;
+disconnect purge_control;
+
+connection default;
+# Give purge every chance to free it, for as long as it would need without the
+# fix (it takes about a second there, so this waits five). The loop must stay:
+# it is what makes the assertion below fail rather than pass by accident when
+# the freeze is missing.
+--disable_query_log
+let $wait= 50;
+while ($wait)
+{
+  let $freed= `SELECT count FROM information_schema.innodb_metrics WHERE name = 'purge_upd_exist_or_extern_records'`;
+  if ($freed)
+  {
+    let $wait= 0;
+  }
+  if (!$freed)
+  {
+    real_sleep 0.1;
+    dec $wait;
+  }
+}
+--enable_query_log
+SELECT count AS externs_freed_while_parked FROM information_schema.innodb_metrics
+WHERE name = 'purge_upd_exist_or_extern_records';
+
+# The parked rollback now reconstructs the 'x...' version and dereferences its
+# BLOB, which is still there, so the rollback completes normally.
+SET DEBUG_SYNC='now SIGNAL resume';
+
+connection victim;
+--reap
+
+connection default;
+disconnect victim;
+
+# Once the rollback is done, purge is free to advance and to free that BLOB,
+# which confirms it was freeable all along and that only the frozen view held
+# purge back.
+let $wait_condition=
+  SELECT count >= 1 FROM information_schema.innodb_metrics
+  WHERE name = 'purge_upd_exist_or_extern_records';
+--source include/wait_condition.inc
+
+SET DEBUG_SYNC='RESET';
+DROP TABLE t;
+# Turn the monitor off, then zero its (server-lifetime cumulative) counter so a
+# later test on the same server sees a clean count, and restore the monitor
+# system variables to their defaults.
+SET GLOBAL innodb_monitor_disable='purge_upd_exist_or_extern_records';
+SET GLOBAL innodb_monitor_reset_all='purge_upd_exist_or_extern_records';
+SET GLOBAL innodb_monitor_enable=default;
+SET GLOBAL innodb_monitor_disable=default;
+SET GLOBAL innodb_monitor_reset_all=default;

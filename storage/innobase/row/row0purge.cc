@@ -695,7 +695,12 @@ nochange_index:
 
 			/* The stack of versions is locked by mtr.
 			Thus, it is safe to fetch the prefixes for
-			externally stored columns. */
+			externally stored columns. purge_sys.view is
+			frozen for the whole batch, so unlike
+			row_undo_mod_sec_is_unsafe() and
+			row_vers_impl_x_locked_low(), which have to hold
+			purge_sys.latch across this call, this caller
+			needs nothing extra. */
 			row = row_build(ROW_COPY_POINTERS, clust_index,
 					prev_version, clust_offsets,
 					NULL, NULL, NULL, &ext, heap);

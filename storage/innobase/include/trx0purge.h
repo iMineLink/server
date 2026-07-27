@@ -466,7 +466,15 @@ public:
 
   struct view_guard
   {
-    enum guard { END_VIEW= -1, PURGE= 0, VIEW= 1};
+    /** Which view to consult, and who holds the latch that protects it.
+    END_VIEW is purge_sys.end_view under purge_sys.end_latch. PURGE is
+    purge_sys.view from within a purge batch, which needs no latch because
+    the purge coordinator only updates the view between batches. VIEW is
+    purge_sys.view under purge_sys.latch. VIEW_HELD is purge_sys.view with
+    purge_sys.latch already held by the caller, which is how a caller that
+    dereferences the externally stored columns of a reconstructed version
+    keeps that view frozen for longer than this guard exists. */
+    enum guard { END_VIEW= -1, PURGE= 0, VIEW= 1, VIEW_HELD= 2 };
     guard latch;
     inline view_guard(guard latch);
     inline ~view_guard();
@@ -533,6 +541,9 @@ purge_sys_t::view_guard::view_guard(purge_sys_t::view_guard::guard latch) :
     /* the access is within a purge batch; purge_coordinator_task
     will wait for all workers to complete before updating the views */
     break;
+  case VIEW_HELD:
+    ut_ad(purge_sys.latch.have_rd());
+    break;
   }
 }
 
@@ -546,6 +557,7 @@ purge_sys_t::view_guard::~view_guard()
     purge_sys.end_latch.rd_unlock();
     break;
   case PURGE:
+  case VIEW_HELD:
     break;
   }
 }

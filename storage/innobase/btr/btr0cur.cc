@@ -842,6 +842,12 @@ static bool btr_cur_need_opposite_intention(const buf_page_t &bpage,
 @return maximum size of a node pointer record in bytes */
 static ulint btr_node_ptr_max_size(const dict_index_t* index)
 {
+	/* A SPATIAL INDEX node pointer holds a minimum bounding rectangle
+	and not the dict_index_get_n_unique_in_tree() fields assumed below.
+	It would also evaluate the unbounded DATA_GEOMETRY column size and
+	wrap around rec_max_size. */
+	ut_ad(!index->is_spatial());
+
 	/* Each record has page_no, length of page_no and header. */
 	ulint comp = dict_table_is_comp(index->table);
 	ulint rec_max_size = comp
@@ -867,8 +873,13 @@ static ulint btr_node_ptr_max_size(const dict_index_t* index)
 			ut_ad(!field->prefix_len
 			      || field->fixed_len == field->prefix_len);
 			/* Fixed lengths are not encoded
-			in ROW_FORMAT=COMPACT. */
-			rec_max_size += field_max_size;
+			in ROW_FORMAT=COMPACT.
+			A column prefix is stored in full, so the exact
+			size is field->fixed_len, which dict_index_add_col()
+			clamps to prefix_len. The unclamped column size
+			would over-estimate a prefixed fixed-length column
+			and cause needless index latch escalations. */
+			rec_max_size += field->fixed_len;
 			continue;
 		}
 
@@ -1467,6 +1478,11 @@ release_tree:
   offsets= rec_get_offsets(page_cur.rec, index(), offsets, 0, ULINT_UNDEFINED,
                            &heap);
 
+  /* Releasing parent page latches below and predicting an opposite
+  intention both rely on btr_node_ptr_max_size() never under-estimating
+  a node pointer record. */
+  ut_ad(!node_ptr_max_size || rec_offs_size(offsets) <= node_ptr_max_size);
+
   ut_ad(block == mtr->at_savepoint(block_savepoint));
 
   switch (latch_mode) {
@@ -2056,6 +2072,12 @@ index_locked:
 
     offsets= rec_get_offsets(page_cur.rec, index, offsets, 0, ULINT_UNDEFINED,
                              &heap);
+
+    /* Releasing parent page latches below and predicting an opposite
+    intention both rely on btr_node_ptr_max_size() never under-estimating
+    a node pointer record. */
+    ut_ad(!node_ptr_max_size || rec_offs_size(offsets) <= node_ptr_max_size);
+
     page= btr_node_ptr_get_child_page_no(page_cur.rec, offsets);
 
     ut_ad(latch_mode != BTR_MODIFY_TREE || upper_rw_latch == RW_X_LATCH);

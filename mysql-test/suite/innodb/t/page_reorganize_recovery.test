@@ -1,0 +1,58 @@
+--source include/have_innodb.inc
+--source include/have_sequence.inc
+# The embedded server does not support restarting.
+--source include/not_embedded.inc
+
+--echo #
+--echo # MDEV-21725: Reduce the redo log volume of btr_page_reorganize_low()
+--echo #
+--echo # A reorganized page is logged as the byte ranges by which its records
+--echo # moved. Crash recovery must reconstruct the same page from them. A
+--echo # debug build logs a checksum of every page that a mini-transaction
+--echo # modifies and compares it with the recovered page, so an incomplete
+--echo # set of records fails the recovery there.
+--echo #
+
+SET GLOBAL innodb_monitor_enable= 'index_page_reorg_successful';
+
+# Records that grow from NULL to a value do not fit in place, so they are
+# inserted at the end of the page and leave a gap behind. The gaps are
+# reclaimed by a reorganization, which moves most of the payload.
+# t1 covers the ROW_FORMAT=COMPACT record header, t2 the REDUNDANT one.
+CREATE TABLE t1 (id INT PRIMARY KEY, dt DATETIME NULL, pad CHAR(30))
+ENGINE=InnoDB ROW_FORMAT=DYNAMIC STATS_PERSISTENT=0;
+CREATE TABLE t2 (id INT PRIMARY KEY, dt DATETIME NULL, pad CHAR(30))
+ENGINE=InnoDB ROW_FORMAT=REDUNDANT STATS_PERSISTENT=0;
+
+INSERT INTO t1 SELECT seq, NULL, REPEAT('a', 30) FROM seq_1_to_1000;
+INSERT INTO t2 SELECT seq, NULL, REPEAT('b', 30) FROM seq_1_to_1000;
+
+SET GLOBAL innodb_monitor_reset= 'index_page_reorg_successful';
+
+--let $no_checkpoint_flush= 1
+--source ../include/no_checkpoint_start.inc
+
+UPDATE t1 SET dt= '2025-01-01' + INTERVAL id SECOND;
+UPDATE t2 SET dt= '2025-01-01' + INTERVAL id SECOND;
+# Shrinking the records leaves gaps again, in other places.
+UPDATE t1 SET dt= NULL;
+UPDATE t2 SET dt= NULL;
+UPDATE t1 SET dt= '2026-01-01' + INTERVAL id SECOND WHERE id % 2;
+UPDATE t2 SET dt= '2026-01-01' + INTERVAL id SECOND WHERE id % 2;
+
+--echo # The range that the recovery replays must contain reorganizations.
+SELECT count > 0 AS reorganized FROM INFORMATION_SCHEMA.INNODB_METRICS
+WHERE NAME= 'index_page_reorg_successful';
+
+--let CLEANUP_IF_CHECKPOINT= DROP TABLE t1,t2;
+--source ../include/no_checkpoint_end.inc
+
+--source include/start_mysqld.inc
+
+CHECK TABLE t1,t2 EXTENDED;
+SELECT COUNT(*), COUNT(dt), SUM(id), SUM(LENGTH(pad)), SUM(TO_SECONDS(dt))
+FROM t1;
+SELECT COUNT(*), COUNT(dt), SUM(id), SUM(LENGTH(pad)), SUM(TO_SECONDS(dt))
+FROM t2;
+
+DROP TABLE t1,t2;

@@ -1288,6 +1288,226 @@ void btr_write_autoinc(trx_t *trx, dict_index_t *index, uint64_t autoinc,
   mtr.commit();
 }
 
+/** Minimum length of a run of bytes that is logged as a copy from
+elsewhere in the same page. A MEMMOVE record occupies 4 to 10 bytes, and
+it interrupts a run of literal bytes, which costs 2 to 4 bytes more for
+the record that follows the copy. */
+static constexpr ulint BTR_REORG_MIN_MOVE= 8;
+
+/** Minimum length of a run of unchanged bytes that is left unlogged.
+Leaving bytes out costs nothing, except that the record that follows
+must encode a larger byte offset. */
+static constexpr ulint BTR_REORG_MIN_SKIP= 4;
+
+/** Minimum length of a run of bytes that moved towards the end of the
+page for it to be logged as a copy. Such a copy overwrites bytes that the
+copies of the ascending pass could have referred to, so it must save more
+than the few bytes that a copy occupies. */
+static constexpr ulint BTR_REORG_MIN_UP_MOVE= 64;
+
+/** Log the payload area of a reorganized index page.
+
+A reorganized page holds the same records as the original page, at
+different byte offsets. Where a run of bytes only moved, a MEMMOVE
+record refers to the bytes that the page already holds, instead of
+repeating them. That is what makes the reorganization of a nearly full
+page cheaper than writing out the whole payload.
+
+The bulk of the records is written in ascending order of the destination
+offset. Everything below the current position is therefore final, and
+everything at or above it still holds the original bytes, both here and
+while the records are being applied to the page in crash recovery. A copy
+may only refer to a source at or above the current position, which
+restricts that pass to records that moved towards the start of the page.
+
+Records that moved towards the end of the page are covered by a single
+copy that is written first, while the bytes below its destination are
+still the original ones. It is a single copy because any further one
+would have to be ordered against this one and against the ascending pass.
+Where a page is reorganized to reclaim the space of records that were
+replaced by longer ones, that one copy covers all the records that were
+not replaced yet.
+
+The offsets by which the records moved only serve as candidates. A copy
+is logged after the bytes have been found to be equal, so a candidate
+that does not apply can cost log volume, but never correctness.
+
+@param block  reorganized page
+@param old    the page as it was before the reorganization
+@param start  start of the payload area, after the "supremum" record
+@param top    end of the payload area (PAGE_HEAP_TOP)
+@param mtr    mini-transaction */
+static void btr_page_reorganize_log_payload(const buf_block_t &block,
+                                            const buf_block_t &old,
+                                            ulint start, ulint top,
+                                            mtr_t *mtr) noexcept
+{
+  const byte *const nf= block.page.frame;
+  const byte *const of= old.page.frame;
+  const rec_t *rn= page_rec_get_next_const(page_get_infimum_rec(nf));
+  const rec_t *ro= page_rec_get_next_const(page_get_infimum_rec(of));
+
+  /* Every record is applied to a copy of the original page as well, in
+  the order in which the records are written, the same way as the crash
+  recovery applies them. The payload of the reorganized page must be
+  reproduced; that is what limits which copies may be written. */
+  ut_d(buf_block_t *const sim= buf_block_alloc());
+  ut_d(byte *const sf= sim->page.frame);
+  ut_d(memcpy(sf, of, srv_page_size));
+
+  /* The longest run of bytes that moved towards the end of the page. */
+  ulint up_dest= 0, up_len= 0;
+  ptrdiff_t up_moved= 0;
+
+  for (ulint measured= start; rn && ro && page_rec_is_user_rec(rn); )
+  {
+    const ulint dest= ulint(rn - nf);
+    const ptrdiff_t moved= (ro - of) - ptrdiff_t(dest);
+    rn= page_rec_get_next_const(rn);
+    ro= page_rec_get_next_const(ro);
+    /* Records that moved towards the start of the page are logged by the
+    ascending pass. Skipping the records that a measured run covers keeps
+    the runs from being measured more than once. */
+    if (moved >= 0 || dest < measured)
+      continue;
+    const ptrdiff_t src= ptrdiff_t(dest) + moved;
+    if (src < ptrdiff_t(start))
+      continue;
+    ulint len= 0;
+    while (dest + len < top && nf[dest + len] == of[ulint(src) + len])
+      len++;
+    measured= dest + len;
+    /* The bytes of the record header precede the offset of the record. */
+    ulint back= 0;
+    while (dest - back > start && ulint(src) - back > start &&
+           nf[dest - back - 1] == of[ulint(src) - back - 1])
+      back++;
+    if (back + len > up_len)
+    {
+      up_len= back + len;
+      up_dest= dest - back;
+      up_moved= moved;
+    }
+  }
+
+  if (up_len < BTR_REORG_MIN_UP_MOVE)
+    up_len= 0;
+  else
+  {
+    const ulint up_src= ulint(ptrdiff_t(up_dest) + up_moved);
+    mtr->memmove(block, up_dest, up_src, up_len);
+    ut_d(memmove(sf + up_dest, sf + up_src, up_len));
+  }
+
+  rn= page_rec_get_next_const(page_get_infimum_rec(nf));
+  ro= page_rec_get_next_const(page_get_infimum_rec(of));
+  /* The offset by which the record that precedes the current position
+  moved, and the offset of the last logged copy. */
+  ptrdiff_t moved_at= 0, moved_last= 0;
+  /* The start of a pending run of literal bytes, or 0 for none. */
+  ulint literal= 0;
+
+  for (ulint p= start; p < top; )
+  {
+    while (rn && ro && page_rec_is_user_rec(rn) && ulint(rn - nf) <= p)
+    {
+      moved_at= (ro - of) - (rn - nf);
+      rn= page_rec_get_next_const(rn);
+      ro= page_rec_get_next_const(ro);
+    }
+
+    if (up_len && p >= up_dest && p < up_dest + up_len)
+    {
+      /* These bytes were written by the copy above. */
+      if (literal)
+      {
+        mtr->memcpy(block, literal, p - literal);
+        ut_d(memcpy(sf + literal, nf + literal, p - literal));
+        literal= 0;
+      }
+      p= up_dest + up_len;
+      continue;
+    }
+
+    /* The record at or after the current position covers the bytes of
+    its own header, which precede its offset. */
+    const ptrdiff_t moved_next= rn && ro && page_rec_is_user_rec(rn)
+      ? (ro - of) - (rn - nf) : 0;
+    const ptrdiff_t candidate[]{moved_last, moved_at, moved_next, 0};
+    ulint best_len= 0;
+    ptrdiff_t best_moved= 0;
+
+    for (const ptrdiff_t moved : candidate)
+    {
+      /* A source below the current position was overwritten by an
+      earlier record of this mini-transaction. */
+      if (moved < 0)
+        continue;
+      const ulint src= p + ulint(moved);
+      if (src >= ulint(srv_page_size) || nf[p] != of[src])
+        continue;
+      ulint max= top - p;
+      if (max > ulint(srv_page_size) - src)
+        max= ulint(srv_page_size) - src;
+      if (up_len && src < up_dest + up_len)
+      {
+        /* The copy above overwrote the source. */
+        if (src >= up_dest)
+          continue;
+        if (max > up_dest - src)
+          max= up_dest - src;
+      }
+      ulint len= 1;
+      while (len < max && nf[p + len] == of[src + len])
+        len++;
+      if (len > best_len)
+      {
+        best_len= len;
+        best_moved= moved;
+      }
+    }
+
+    /* A run that reaches the destination of the copy above must stop
+    there, because the page no longer holds the original bytes. */
+    if (up_len && p < up_dest && best_len > up_dest - p)
+      best_len= up_dest - p;
+
+    if (best_len < (best_moved ? BTR_REORG_MIN_MOVE : BTR_REORG_MIN_SKIP))
+    {
+      if (!literal)
+        literal= p;
+      p++;
+      continue;
+    }
+
+    if (literal)
+    {
+      mtr->memcpy(block, literal, p - literal);
+      ut_d(memcpy(sf + literal, nf + literal, p - literal));
+      literal= 0;
+    }
+
+    if (best_moved)
+    {
+      const ulint src= p + ulint(best_moved);
+      mtr->memmove(block, p, src, best_len);
+      ut_d(memmove(sf + p, sf + src, best_len));
+      moved_last= best_moved;
+    }
+
+    p+= best_len;
+  }
+
+  if (literal)
+  {
+    mtr->memcpy(block, literal, top - literal);
+    ut_d(memcpy(sf + literal, nf + literal, top - literal));
+  }
+
+  ut_ad(!memcmp(sf + start, nf + start, top - start));
+  ut_d(buf_block_free(sim));
+}
+
 /** Reorganize an index page.
 @param cursor      index page cursor
 @param mtr         mini-transaction */
@@ -1477,17 +1697,8 @@ static dberr_t btr_page_reorganize_low(page_cur_t *cursor, mtr_t *mtr)
                     REC_N_NEW_EXTRA_BYTES - 1));
 
       /* Log the differences in the payload. */
-      for (a= PAGE_NEW_SUPREMUM_END, e= top; a < e; a++)
-      {
-        if (old->page.frame[a] == block->page.frame[a])
-          continue;
-        while (--e, old->page.frame[e] == block->page.frame[e]);
-        e++;
-        ut_ad(a < e);
-        /* TODO: write MEMMOVE records to minimize this further! */
-        mtr->memcpy(*block, a, e - a);
-        break;
-      }
+      btr_page_reorganize_log_payload(*block, *old, PAGE_NEW_SUPREMUM_END, top,
+                                      mtr);
     }
     else
     {
@@ -1517,17 +1728,8 @@ static dberr_t btr_page_reorganize_low(page_cur_t *cursor, mtr_t *mtr)
                     REC_N_OLD_EXTRA_BYTES - 1));
 
       /* Log the differences in the payload. */
-      for (a= PAGE_OLD_SUPREMUM_END, e= top; a < e; a++)
-      {
-        if (old->page.frame[a] == block->page.frame[a])
-          continue;
-        while (--e, old->page.frame[e] == block->page.frame[e]);
-        e++;
-        ut_ad(a < e);
-        /* TODO: write MEMMOVE records to minimize this further! */
-        mtr->memcpy(*block, a, e - a);
-        break;
-      }
+      btr_page_reorganize_log_payload(*block, *old, PAGE_OLD_SUPREMUM_END, top,
+                                      mtr);
     }
 
     e= srv_page_size - PAGE_DIR;

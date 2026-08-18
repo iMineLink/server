@@ -1,0 +1,52 @@
+#
+# MDEV-21725: Reduce the redo log volume of btr_page_reorganize_low()
+#
+# A reorganized page is logged as the byte ranges by which its records
+# moved. Crash recovery must reconstruct the same page from them. A
+# debug build logs a checksum of every page that a mini-transaction
+# modifies and compares it with the recovered page, so an incomplete
+# set of records fails the recovery there.
+#
+SET GLOBAL innodb_monitor_enable= 'index_page_reorg_successful';
+CREATE TABLE t1 (id INT PRIMARY KEY, dt DATETIME NULL, pad CHAR(30))
+ENGINE=InnoDB ROW_FORMAT=DYNAMIC STATS_PERSISTENT=0;
+CREATE TABLE t2 (id INT PRIMARY KEY, dt DATETIME NULL, pad CHAR(30))
+ENGINE=InnoDB ROW_FORMAT=REDUNDANT STATS_PERSISTENT=0;
+INSERT INTO t1 SELECT seq, NULL, REPEAT('a', 30) FROM seq_1_to_1000;
+INSERT INTO t2 SELECT seq, NULL, REPEAT('b', 30) FROM seq_1_to_1000;
+SET GLOBAL innodb_monitor_reset= 'index_page_reorg_successful';
+
+# Flush all dirty pages from buffer pool
+SET @no_checkpoint_save_pct= @@GLOBAL.innodb_max_dirty_pages_pct;
+SET @no_checkpoint_save_pct_lwm= @@GLOBAL.innodb_max_dirty_pages_pct_lwm;
+SET GLOBAL innodb_max_dirty_pages_pct_lwm=0.0;
+SET GLOBAL innodb_max_dirty_pages_pct=0.0;
+SET GLOBAL innodb_max_dirty_pages_pct= @no_checkpoint_save_pct;
+SET GLOBAL innodb_max_dirty_pages_pct_lwm= @no_checkpoint_save_pct_lwm;
+
+UPDATE t1 SET dt= '2025-01-01' + INTERVAL id SECOND;
+UPDATE t2 SET dt= '2025-01-01' + INTERVAL id SECOND;
+UPDATE t1 SET dt= NULL;
+UPDATE t2 SET dt= NULL;
+UPDATE t1 SET dt= '2026-01-01' + INTERVAL id SECOND WHERE id % 2;
+UPDATE t2 SET dt= '2026-01-01' + INTERVAL id SECOND WHERE id % 2;
+# The range that the recovery replays must contain reorganizations.
+SELECT count > 0 AS reorganized FROM INFORMATION_SCHEMA.INNODB_METRICS
+WHERE NAME= 'index_page_reorg_successful';
+reorganized
+1
+# Kill the server
+# restart
+CHECK TABLE t1,t2 EXTENDED;
+Table	Op	Msg_type	Msg_text
+test.t1	check	status	OK
+test.t2	check	status	OK
+SELECT COUNT(*), COUNT(dt), SUM(id), SUM(LENGTH(pad)), SUM(TO_SECONDS(dt))
+FROM t1;
+COUNT(*)	COUNT(dt)	SUM(id)	SUM(LENGTH(pad))	SUM(TO_SECONDS(dt))
+1000	500	500500	30000	31967222650000
+SELECT COUNT(*), COUNT(dt), SUM(id), SUM(LENGTH(pad)), SUM(TO_SECONDS(dt))
+FROM t2;
+COUNT(*)	COUNT(dt)	SUM(id)	SUM(LENGTH(pad))	SUM(TO_SECONDS(dt))
+1000	500	500500	30000	31967222650000
+DROP TABLE t1,t2;

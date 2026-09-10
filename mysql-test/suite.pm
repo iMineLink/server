@@ -30,6 +30,9 @@ sub skip_combinations {
   $skip{'include/have_debug.inc'} = 'Requires debug build'
              unless defined $::mysqld_variables{'debug-dbug'};
 
+  $skip{'include/have_innodb_ahi.inc'} = 'Requires InnoDB adaptive hash index'
+             unless defined $::mysqld_variables{'innodb-adaptive-hash-index'};
+
   # and for the wrong word size
   # check for exact values, in case the default changes to be small everywhere
   my $longsysvar= $::mysqld_variables{'max-binlog-stmt-cache-size'};

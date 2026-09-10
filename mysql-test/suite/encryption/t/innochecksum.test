@@ -6,6 +6,7 @@
 -- source include/not_embedded.inc
 # Require InnoDB
 -- source include/have_innodb.inc
+-- source include/have_innodb_ahi.inc
 -- source include/have_file_key_management_plugin.inc
 -- source include/innodb_page_size_small.inc
 -- source include/innodb_checksum_algorithm.inc

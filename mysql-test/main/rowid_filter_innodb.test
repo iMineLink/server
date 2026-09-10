@@ -2,6 +2,7 @@
 --source include/have_innodb.inc
 --source include/have_debug.inc
 --source include/have_sequence.inc
+--source include/have_innodb_ahi.inc
 --source include/innodb_stable_estimates.inc
 
 --disable_query_log

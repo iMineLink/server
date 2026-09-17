@@ -458,6 +458,10 @@ ulint buf_read_ahead_random(const page_id_t page_id) noexcept
     if (const buf_page_t *bpage= buf_pool.page_hash.get(i, chain))
     {
       const auto state= bpage->zip.get_state();
+      /* zip.is_accessed() is the fresh, per-sweep flag; a page can be hot
+      right now but not yet promoted out of the old sublist until the next
+      sweep clears it. Without this term, such a page would wrongly fail
+      the !old() check below during that lag window. */
       if ((bpage->zip.is_accessed(state) ||
            (!bpage->zip.old(state) && bpage->is_accessed())) &&
           !--count)

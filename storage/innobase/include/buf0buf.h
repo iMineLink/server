@@ -1539,6 +1539,49 @@ public:
   Atomic_counter<ulint> n_optimistic_fail_sibling;
   /* @} */
 
+  /** @name Purge vs. foreground index-maintenance counters
+  Each B-tree merge attempt (btr_compress()) and the page splits that
+  result from tree modification are attributed to whichever kind of
+  thread performed them, to separate purge-driven index shrink/regrow
+  churn from ordinary foreground DML. The two merge-attempt counters
+  by latch mode indicate how often such a merge ran with index->lock
+  held in X mode rather than SX mode. Not protected by any mutex. */
+  /* @{ */
+  /** btr_compress() was attempted by a purge coordinator or worker
+  thread */
+  Atomic_counter<ulint> n_merge_attempts_purge;
+  /** btr_compress() was attempted by a foreground (non-purge) thread */
+  Atomic_counter<ulint> n_merge_attempts_foreground;
+  /** btr_compress() succeeded, attempted by a purge thread */
+  Atomic_counter<ulint> n_merge_successful_purge;
+  /** btr_compress() succeeded, attempted by a foreground thread */
+  Atomic_counter<ulint> n_merge_successful_foreground;
+  /** a page was split (btr_page_split_and_insert() or the R-tree
+  equivalent), by a purge thread */
+  Atomic_counter<ulint> n_pages_split_purge;
+  /** a page was split, by a foreground (non-purge) thread */
+  Atomic_counter<ulint> n_pages_split_foreground;
+  /** btr_compress() was attempted while holding index->lock in X mode */
+  Atomic_counter<ulint> n_merge_attempts_x_latch;
+  /** btr_compress() was attempted while holding index->lock in SX mode */
+  Atomic_counter<ulint> n_merge_attempts_sx_latch;
+  /* @} */
+
+  /** @name Purge secondary-index removal path counters
+  row_purge_remove_sec_if_poss() first tries a leaf-only optimistic
+  delete (row_purge_remove_sec_if_poss_leaf()) and only falls back to
+  a pessimistic, tree-modifying delete
+  (row_purge_remove_sec_if_poss_tree()) when that is not possible.
+  Not protected by any mutex. */
+  /* @{ */
+  /** the leaf-only delete removed the entry, or found it already gone;
+  no tree-modifying fallback was needed */
+  Atomic_counter<ulint> n_purge_sec_leaf_removed;
+  /** the leaf-only delete could not remove the entry, falling back to
+  the tree-modifying delete */
+  Atomic_counter<ulint> n_purge_sec_tree_fallback;
+  /* @} */
+
   /** @name Page flushing algorithm fields */
   /* @{ */
 

@@ -2847,6 +2847,11 @@ btr_page_split_and_insert(
 	ut_ad(!cursor->index()->is_spatial());
 
 	buf_pool.pages_split++;
+	if (srv_thread_is_purge) {
+		buf_pool.n_pages_split_purge++;
+	} else {
+		buf_pool.n_pages_split_foreground++;
+	}
 
 	if (!*heap) {
 		*heap = mem_heap_create(1024);
@@ -3545,6 +3550,18 @@ btr_compress(
 
 	MONITOR_INC(MONITOR_INDEX_MERGE_ATTEMPTS);
 
+	if (srv_thread_is_purge) {
+		buf_pool.n_merge_attempts_purge++;
+	} else {
+		buf_pool.n_merge_attempts_foreground++;
+	}
+
+	if (mtr->memo_contains(index->lock, MTR_MEMO_X_LOCK)) {
+		buf_pool.n_merge_attempts_x_latch++;
+	} else {
+		buf_pool.n_merge_attempts_sx_latch++;
+	}
+
 	const uint32_t left_page_no = btr_page_get_prev(page);
 	const uint32_t right_page_no = btr_page_get_next(page);
 	dberr_t err = DB_SUCCESS;
@@ -3615,6 +3632,12 @@ success:
 		}
 
 		MONITOR_INC(MONITOR_INDEX_MERGE_SUCCESSFUL);
+
+		if (srv_thread_is_purge) {
+			buf_pool.n_merge_successful_purge++;
+		} else {
+			buf_pool.n_merge_successful_foreground++;
+		}
 err_exit:
 		mem_heap_free(heap);
 		DBUG_RETURN(err);

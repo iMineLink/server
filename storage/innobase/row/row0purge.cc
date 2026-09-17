@@ -26,6 +26,7 @@ Created 3/14/1997 Heikki Tuuri
 
 #include "row0purge.h"
 #include "btr0cur.h"
+#include "buf0buf.h"
 #include "fsp0fsp.h"
 #include "mach0data.h"
 #include "dict0crea.h"
@@ -983,7 +984,8 @@ row_purge_remove_sec_if_poss(
     return;
 
   if (trx_id_t page_max_trx_id=
-      row_purge_remove_sec_if_poss_leaf(node, index, entry))
+      row_purge_remove_sec_if_poss_leaf(node, index, entry)) {
+    buf_pool.n_purge_sec_tree_fallback++;
     for (auto n_tries= BTR_CUR_RETRY_DELETE_N_TIMES;
          !row_purge_remove_sec_if_poss_tree(node, index, entry,
                                             page_max_trx_id);
@@ -991,6 +993,9 @@ row_purge_remove_sec_if_poss(
       /* The delete operation may fail if we have little
       file space left (if innodb_file_per_table=0?) */
       ut_a(--n_tries);
+  } else {
+    buf_pool.n_purge_sec_leaf_removed++;
+  }
 }
 
 /**

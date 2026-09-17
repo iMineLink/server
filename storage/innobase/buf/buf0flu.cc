@@ -1261,7 +1261,7 @@ static void buf_flush_discard_page(buf_page_t *bpage) noexcept
   buf_LRU_free_page(bpage, true);
 }
 
-void buf_page_t::make_young(uint16_t tm) noexcept
+void buf_page_t::make_young(uint16_t now) noexcept
 {
   mysql_mutex_assert_owner(&buf_pool.mutex);
   ut_ad(in_file());
@@ -1269,20 +1269,25 @@ void buf_page_t::make_young(uint16_t tm) noexcept
   if (!is_old())
     return;
 
-  /* tm == 0 means innodb_old_blocks_time is disabled: zero ms of probation
-  is trivially satisfied, so promote on the first observed access. Otherwise a
-  block in LRU_old is promoted only once its first access is at least the
-  probation window old (tm >= access_time), and it re-earns that window every
-  time it falls back into LRU_old. */
-  if (tm && tm < access_time)
+  /* threshold == 0 means innodb_old_blocks_time is disabled: zero ms of
+  probation is trivially satisfied, so promote on the first observed
+  access. Otherwise a block in LRU_old is promoted only once its age
+  (elapsed time since its first access) is at least the probation window,
+  and it re-earns that window every time it falls back into LRU_old.
+
+  The age is computed as uint16_t(now - access_time), not compared as
+  the two raw stamps, because access_time wraps around every 65536
+  seconds (18.2 hours): comparing raw stamps breaks across that wrap,
+  while the subtraction stays correct modulo 2^16. */
+  if (const uint32_t threshold= buf_pool.LRU_old_time_threshold)
   {
-    buf_pool.stat.n_pages_not_made_young++;
-    return;
+    if (uint16_t(now - access_time) < threshold / 1000)
+    {
+      buf_pool.stat.n_pages_not_made_young++;
+      return;
+    }
   }
 
-  /* Note: access_time wraps around in only 65536 seconds or 18.2 hours.
-  Zero it here so the next flag_accessed() will set a new access time and
-  the wrap cannot misclassify a frequently accessed block as "too new". */
   access_time= 0;
   buf_page_make_young(this);
 }
@@ -1335,10 +1340,7 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
     std::min((buf_pool.usable_size()) / 20 - 1, size_t{BUF_LRU_MIN_LEN});
   /* CLOCK_MONOTONIC (via my_interval_timer()) avoids the NTP/wall-clock
   jumps that uint16_t(time(nullptr)) would expose this heuristic to. */
-  const uint16_t tm= buf_pool.LRU_old_time_threshold
-    ? uint16_t(my_interval_timer() / 1000000000ULL -
-               buf_pool.LRU_old_time_threshold / 1000)
-    : 0;
+  const uint16_t now= uint16_t(my_interval_timer() / 1000000000ULL);
 
   for (buf_page_t *bpage= UT_LIST_GET_LAST(buf_pool.LRU);
        bpage &&
@@ -1353,7 +1355,7 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
 
     if (bpage->zip.was_accessed())
     {
-      bpage->make_young(tm);
+      bpage->make_young(now);
       continue;
     }
 
@@ -1529,10 +1531,7 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
 
   /* CLOCK_MONOTONIC (via my_interval_timer()) avoids the NTP/wall-clock
   jumps that uint16_t(time(nullptr)) would expose this heuristic to. */
-  const uint16_t tm= buf_pool.LRU_old_time_threshold
-    ? uint16_t(my_interval_timer() / 1000000000ULL -
-               buf_pool.LRU_old_time_threshold / 1000)
-    : 0;
+  const uint16_t now= uint16_t(my_interval_timer() / 1000000000ULL);
 
   /* Start from the end of the list looking for a suitable block to be
   flushed. */
@@ -1547,7 +1546,7 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
     ut_ad(bpage->in_file());
 
     if (bpage->zip.was_accessed())
-      bpage->make_young(tm);
+      bpage->make_young(now);
 
     {
       buf_page_t *prev= UT_LIST_GET_PREV(list, bpage);

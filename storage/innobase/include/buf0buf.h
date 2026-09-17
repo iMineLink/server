@@ -895,8 +895,8 @@ public:
   bool set_accessed() noexcept;
 
   /** Clear flag_accessed_only() during a batch
-  @param tm  is_accessed() threshold */
-  void make_young(uint16_t tm) noexcept;
+  @param now  uint16_t(my_interval_timer() / 1e9) */
+  void make_young(uint16_t now) noexcept;
 };
 
 /** The buffer control block structure */

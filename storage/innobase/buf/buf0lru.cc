@@ -173,9 +173,9 @@ bool buf_LRU_evict_from_unzip_LRU()
 /** Try to free an uncompressed page of a compressed block from the unzip
 LRU list.  The compressed page is preserved, and it need not be clean.
 @param limit  maximum number of blocks to scan
-@param tm     buf_page_t::is_accessed() threshold for recent access, or 0
+@param now    uint16_t(my_interval_timer() / 1e9)
 @return true if freed */
-static bool buf_LRU_free_from_unzip_LRU_list(ulint limit, uint16_t tm)
+static bool buf_LRU_free_from_unzip_LRU_list(ulint limit, uint16_t now)
 {
 	if (!buf_LRU_evict_from_unzip_LRU()) {
 		return(false);
@@ -194,7 +194,7 @@ static bool buf_LRU_free_from_unzip_LRU_list(ulint limit, uint16_t tm)
 		ut_ad(block->page.in_LRU_list);
 
 		if (block->page.zip.was_accessed()) {
-			block->page.make_young(tm);
+			block->page.make_young(now);
 		} else {
 			freed = buf_LRU_free_page(&block->page, false);
 			if (freed) {
@@ -219,9 +219,9 @@ static bool buf_LRU_free_from_unzip_LRU_list(ulint limit, uint16_t tm)
 
 /** Try to free a clean page from the common LRU list.
 @param limit  maximum number of blocks to scan
-@param tm     buf_page_t::is_accessed() threshold for recent access, or 0
+@param now    uint16_t(my_interval_timer() / 1e9)
 @return whether a page was freed */
-static bool buf_LRU_free_from_common_LRU_list(ulint limit, uint16_t tm)
+static bool buf_LRU_free_from_common_LRU_list(ulint limit, uint16_t now)
 {
 	mysql_mutex_assert_owner(&buf_pool.mutex);
 
@@ -235,7 +235,7 @@ static bool buf_LRU_free_from_common_LRU_list(ulint limit, uint16_t tm)
 		buf_pool.lru_scan_itr.set(prev);
 
 		if (bpage->zip.was_accessed()) {
-			bpage->make_young(tm);
+			bpage->make_young(now);
 			continue;
 		}
 
@@ -1260,15 +1260,10 @@ static bool buf_LRU_scan_and_free_block(ulint limit)
 {
   mysql_mutex_assert_owner(&buf_pool.mutex);
 
-  /* CLOCK_MONOTONIC (via my_interval_timer()) avoids the NTP/wall-clock
-  jumps that uint16_t(time(nullptr)) would expose this heuristic to. */
-  const uint16_t tm= buf_pool.LRU_old_time_threshold
-    ? uint16_t(my_interval_timer() / 1000000000ULL -
-               buf_pool.LRU_old_time_threshold / 1000)
-    : 0;
+  const uint16_t now= uint16_t(my_interval_timer() / 1000000000ULL);
 
-  return buf_LRU_free_from_unzip_LRU_list(limit, tm) ||
-    buf_LRU_free_from_common_LRU_list(limit, tm);
+  return buf_LRU_free_from_unzip_LRU_list(limit, now) ||
+    buf_LRU_free_from_common_LRU_list(limit, now);
 }
 
 void buf_LRU_truncate_temp(uint32_t threshold)

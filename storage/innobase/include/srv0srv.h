@@ -554,6 +554,11 @@ void srv_purge_worker_task_low();
 
 } /* extern "C" */
 
+/** Whether the current thread is a purge coordinator or purge worker
+thread, for attributing buf_pool_t optimistic-access failure counters
+to purge vs foreground contention. */
+extern thread_local bool srv_thread_is_purge;
+
 #ifdef UNIV_DEBUG
 /** @return number of tasks in queue */
 ulint srv_get_task_queue_length();

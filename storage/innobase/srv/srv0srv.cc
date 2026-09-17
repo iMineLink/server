@@ -458,6 +458,8 @@ public:
 
 static purge_coordinator_state purge_state;
 
+thread_local bool srv_thread_is_purge;
+
 /** threadpool timer for srv_monitor_task() */
 std::unique_ptr<tpool::timer> srv_monitor_timer;
 
@@ -1510,7 +1512,9 @@ static void purge_worker_callback(void*)
   trx_t *trx= trx_create();
   trx->mysql_thd= thd;
   thd_set_ha_data(thd, innodb_hton_ptr, trx);
+  srv_thread_is_purge= true;
   srv_purge_worker_task_low();
+  srv_thread_is_purge= false;
   release_thd(trx, ctx);
 }
 
@@ -1521,7 +1525,9 @@ static void purge_coordinator_callback(void*)
   trx_t *trx= trx_create();
   trx->mysql_thd= thd;
   thd_set_ha_data(thd, innodb_hton_ptr, trx);
+  srv_thread_is_purge= true;
   purge_state.do_purge(trx);
+  srv_thread_is_purge= false;
   release_thd(trx, ctx);
 }
 

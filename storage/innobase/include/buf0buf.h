@@ -1518,8 +1518,12 @@ public:
   btr_pcur_optimistic_latch_leaves()) was refused and the caller had
   to fall back to a full tree search. Not protected by any mutex. */
   /* @{ */
-  /** an S or X try-lock on the block did not succeed immediately */
-  Atomic_counter<ulint> n_optimistic_fail_latch_busy;
+  /** an S or X try-lock on the block did not succeed immediately,
+  attempted by a purge coordinator or worker thread */
+  Atomic_counter<ulint> n_optimistic_fail_latch_busy_purge;
+  /** an S or X try-lock on the block did not succeed immediately,
+  attempted by a foreground (non-purge) thread */
+  Atomic_counter<ulint> n_optimistic_fail_latch_busy_foreground;
   /** block->modify_clock no longer matched the remembered value,
   meaning the page's content changed since */
   Atomic_counter<ulint> n_optimistic_fail_modify_clock;

@@ -2994,6 +2994,16 @@ latched:
 	return block;
 }
 
+/** Count an optimistic-access latch-busy failure, attributed to
+whether the calling thread is purge or foreground. */
+static inline void buf_page_optimistic_fail_latch_busy() noexcept
+{
+  if (srv_thread_is_purge)
+    buf_pool.n_optimistic_fail_latch_busy_purge++;
+  else
+    buf_pool.n_optimistic_fail_latch_busy_foreground++;
+}
+
 buf_block_t *buf_page_optimistic_fix(buf_block_t *block, page_id_t id) noexcept
 {
   buf_pool_t::hash_chain &chain= buf_pool.page_hash.cell_get(id.fold());
@@ -3015,7 +3025,7 @@ buf_block_t *buf_page_optimistic_fix(buf_block_t *block, page_id_t id) noexcept
   else if (block->page.id() != id)
     buf_pool.n_optimistic_fail_reused++;
   else
-    buf_pool.n_optimistic_fail_latch_busy++;
+    buf_page_optimistic_fail_latch_busy();
   return nullptr;
 }
 
@@ -3032,7 +3042,7 @@ buf_block_t *buf_page_optimistic_get(buf_block_t *block,
   {
     if (!block->page.lock.s_lock_try())
     {
-      buf_pool.n_optimistic_fail_latch_busy++;
+      buf_page_optimistic_fail_latch_busy();
     fail:
       block->page.unfix();
       return nullptr;
@@ -3064,7 +3074,7 @@ buf_block_t *buf_page_optimistic_get(buf_block_t *block,
   }
   else if (!block->page.lock.x_lock_try())
   {
-    buf_pool.n_optimistic_fail_latch_busy++;
+    buf_page_optimistic_fail_latch_busy();
     goto fail;
   }
   else

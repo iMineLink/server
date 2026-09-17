@@ -3003,9 +3003,19 @@ buf_block_t *buf_page_optimistic_fix(buf_block_t *block, page_id_t id) noexcept
     if (UNIV_LIKELY(state >= buf_page_t::UNFIXED))
       return block;
     else
+    {
       /* Refuse access to pages that are marked as freed in the data file. */
+      buf_pool.n_optimistic_fail_freed++;
       block->page.unfix();
+    }
   }
+  /* block->page.id() is read without a latch, purely for this
+  diagnostic breakdown; a torn read only risks miscounting between
+  these two buckets, never a false "success". */
+  else if (block->page.id() != id)
+    buf_pool.n_optimistic_fail_reused++;
+  else
+    buf_pool.n_optimistic_fail_latch_busy++;
   return nullptr;
 }
 
@@ -3022,13 +3032,21 @@ buf_block_t *buf_page_optimistic_get(buf_block_t *block,
   {
     if (!block->page.lock.s_lock_try())
     {
+      buf_pool.n_optimistic_fail_latch_busy++;
     fail:
       block->page.unfix();
       return nullptr;
     }
 
-    if (modify_clock != block->modify_clock || block->page.is_freed())
+    if (modify_clock != block->modify_clock)
     {
+      buf_pool.n_optimistic_fail_modify_clock++;
+      block->page.lock.s_unlock();
+      goto fail;
+    }
+    if (block->page.is_freed())
+    {
+      buf_pool.n_optimistic_fail_freed++;
       block->page.lock.s_unlock();
       goto fail;
     }
@@ -3045,13 +3063,23 @@ buf_block_t *buf_page_optimistic_get(buf_block_t *block,
     ut_ad(modify_clock == block->modify_clock);
   }
   else if (!block->page.lock.x_lock_try())
+  {
+    buf_pool.n_optimistic_fail_latch_busy++;
     goto fail;
+  }
   else
   {
     ut_ad(!block->page.is_io_fixed());
 
-    if (modify_clock != block->modify_clock || block->page.is_freed())
+    if (modify_clock != block->modify_clock)
     {
+      buf_pool.n_optimistic_fail_modify_clock++;
+      block->page.lock.x_unlock();
+      goto fail;
+    }
+    if (block->page.is_freed())
+    {
+      buf_pool.n_optimistic_fail_freed++;
       block->page.lock.x_unlock();
       goto fail;
     }

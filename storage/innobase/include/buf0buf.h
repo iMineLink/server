@@ -1512,6 +1512,29 @@ public:
   /** number of index page splits */
   Atomic_counter<ulint> pages_split;
 
+  /** @name Optimistic access failure counters
+  Each counts a distinct reason why an optimistic re-latch of a
+  remembered block (buf_page_optimistic_get(),
+  btr_pcur_optimistic_latch_leaves()) was refused and the caller had
+  to fall back to a full tree search. Not protected by any mutex. */
+  /* @{ */
+  /** an S or X try-lock on the block did not succeed immediately */
+  Atomic_counter<ulint> n_optimistic_fail_latch_busy;
+  /** block->modify_clock no longer matched the remembered value,
+  meaning the page's content changed since */
+  Atomic_counter<ulint> n_optimistic_fail_modify_clock;
+  /** the page was found marked as freed */
+  Atomic_counter<ulint> n_optimistic_fail_freed;
+  /** the remembered block no longer held the expected page
+  (its frame was reused for a different page); impossible unless the
+  block was evicted, so it cannot happen in a fully in-memory workload */
+  Atomic_counter<ulint> n_optimistic_fail_reused;
+  /** BTR_SEARCH_PREV only: the assumed left-sibling relationship no
+  longer held (sibling reused, or its FIL_PAGE_NEXT no longer points
+  back at this page) */
+  Atomic_counter<ulint> n_optimistic_fail_sibling;
+  /* @} */
+
   /** @name Page flushing algorithm fields */
   /* @{ */
 

@@ -242,6 +242,7 @@ static bool btr_pcur_optimistic_latch_leaves(btr_pcur_t *pcur,
 
   if (UNIV_UNLIKELY(modify_clock != pcur->modify_clock))
   {
+    buf_pool.n_optimistic_fail_modify_clock++;
   fail:
     mtr->rollback_to_savepoint(savepoint);
     return false;
@@ -258,7 +259,10 @@ static bool btr_pcur_optimistic_latch_leaves(btr_pcur_t *pcur,
         memcmp_aligned<2>(block->page.frame, prev->page.frame, 2) ||
         memcmp_aligned<2>(block->page.frame + PAGE_HEADER + PAGE_INDEX_ID,
                           prev->page.frame + PAGE_HEADER + PAGE_INDEX_ID, 8))
+    {
+      buf_pool.n_optimistic_fail_sibling++;
       goto fail;
+    }
     btr_search_drop_page_hash_index(prev, pcur->index());
   }
   else
@@ -267,12 +271,23 @@ static bool btr_pcur_optimistic_latch_leaves(btr_pcur_t *pcur,
   mtr->upgrade_buffer_fix(savepoint, RW_S_LATCH);
   btr_search_drop_page_hash_index(block, pcur->index());
 
-  if (UNIV_UNLIKELY(block->modify_clock != modify_clock) ||
-      UNIV_UNLIKELY(block->page.is_freed()) ||
-      (prev &&
-       memcmp_aligned<4>(FIL_PAGE_NEXT + prev->page.frame,
-                         FIL_PAGE_OFFSET + page, 4)))
+  if (UNIV_UNLIKELY(block->modify_clock != modify_clock))
+  {
+    buf_pool.n_optimistic_fail_modify_clock++;
     goto fail;
+  }
+  if (UNIV_UNLIKELY(block->page.is_freed()))
+  {
+    buf_pool.n_optimistic_fail_freed++;
+    goto fail;
+  }
+  if (prev &&
+      memcmp_aligned<4>(FIL_PAGE_NEXT + prev->page.frame,
+                        FIL_PAGE_OFFSET + page, 4))
+  {
+    buf_pool.n_optimistic_fail_sibling++;
+    goto fail;
+  }
 
   return true;
 }

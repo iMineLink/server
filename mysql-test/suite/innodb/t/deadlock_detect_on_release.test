@@ -1,0 +1,258 @@
+--source include/have_innodb.inc
+--source include/have_debug.inc
+
+--echo #
+--echo # Deadlock detection for wait chains that a lock release creates
+--echo #
+
+if (!`SELECT @@GLOBAL.innodb_deadlock_detect`)
+{
+  --skip Needs innodb_deadlock_detect=ON
+}
+
+--disable_query_log
+call mtr.add_suppression("InnoDB: Transaction was aborted due to ");
+--enable_query_log
+
+CREATE TABLE t(id INT PRIMARY KEY, v INT NOT NULL) ENGINE=InnoDB;
+INSERT INTO t VALUES (1,0),(2,0),(3,0),(4,0);
+# Undo records make con2a heavier than con4a, so con4a is the victim.
+CREATE TABLE heavy(a INT) ENGINE=InnoDB;
+
+--connect (con2a,localhost,root,,)
+--connect (con3a,localhost,root,,)
+--connect (con4a,localhost,root,,)
+--connect (con3b,localhost,root,,)
+--connect (con4b,localhost,root,,)
+--connect (con5b,localhost,root,,)
+
+--connection default
+SET @save_dbug= @@SESSION.debug_dbug;
+SET SESSION debug_dbug= '+d,innodb_deadlock_check_trace';
+--let SEARCH_FILE= $MYSQLTEST_VARDIR/log/mysqld.1.err
+
+--echo #
+--echo # Case 1: the release creates a cycle; the committing thread detects it
+--echo #
+--connection default
+LET $deadlocks= `SELECT variable_value FROM information_schema.global_status
+                 WHERE variable_name = 'Innodb_deadlocks'`;
+BEGIN;
+SELECT * FROM t WHERE id = 1 LOCK IN SHARE MODE;
+
+--connection con4a
+BEGIN;
+SELECT * FROM t WHERE id = 1 LOCK IN SHARE MODE;
+
+--connection con3a
+BEGIN;
+send UPDATE t SET v = v + 1 WHERE id = 1;
+
+--connection con2a
+LET $wait_condition= SELECT COUNT(*) = 1 FROM information_schema.innodb_trx
+                     WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+BEGIN;
+INSERT INTO heavy VALUES (1),(2),(3),(4),(5),(6),(7),(8);
+UPDATE t SET v = v + 1 WHERE id = 2;
+send UPDATE t SET v = v + 1 WHERE id = 1;
+
+--connection con4a
+LET $wait_condition= SELECT COUNT(*) = 2 FROM information_schema.innodb_trx
+                     WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+# con4a waits for con2a, which waits for default. No cycle exists yet.
+send UPDATE t SET v = v + 1 WHERE id = 2;
+
+--connection default
+LET $wait_condition= SELECT COUNT(*) = 3 FROM information_schema.innodb_trx
+                     WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+# The release makes con2a wait for con4a, which waits for con2a.
+COMMIT;
+
+--connection con4a
+--error ER_LOCK_DEADLOCK
+reap;
+
+--connection con3a
+reap;
+COMMIT;
+
+--connection con2a
+reap;
+COMMIT;
+
+--connection default
+SELECT * FROM t WHERE id IN (1,2);
+--disable_query_log
+eval SELECT variable_value - $deadlocks AS new_deadlocks
+FROM information_schema.global_status WHERE variable_name = 'Innodb_deadlocks';
+--enable_query_log
+--let SEARCH_PATTERN= deadlock_check\(\): cycle found
+--source include/search_pattern_in_file.inc
+--let SEARCH_PATTERN= deadlock_check\(\): no cycle
+--source include/search_pattern_in_file.inc
+UPDATE t SET v = 0;
+
+--echo #
+--echo # Case 2: the release extends a wait chain without creating a cycle
+--echo #
+--connection default
+LET $deadlocks= `SELECT variable_value FROM information_schema.global_status
+                 WHERE variable_name = 'Innodb_deadlocks'`;
+BEGIN;
+SELECT * FROM t WHERE id = 3 LOCK IN SHARE MODE;
+
+--connection con4b
+BEGIN;
+SELECT * FROM t WHERE id = 3 LOCK IN SHARE MODE;
+
+--connection con3b
+BEGIN;
+send UPDATE t SET v = v + 1 WHERE id = 3;
+
+--connection con5b
+LET $wait_condition= SELECT COUNT(*) = 1 FROM information_schema.innodb_trx
+                     WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+BEGIN;
+UPDATE t SET v = v + 1 WHERE id = 4;
+
+--connection con4b
+send UPDATE t SET v = v + 1 WHERE id = 4;
+
+--connection default
+LET $wait_condition= SELECT COUNT(*) = 2 FROM information_schema.innodb_trx
+                     WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+# The release makes con3b wait for con4b, which waits for con5b.
+COMMIT;
+
+--connection con5b
+LET $wait_condition= SELECT COUNT(*) = 2 FROM information_schema.innodb_trx
+                     WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+COMMIT;
+
+--connection con4b
+reap;
+COMMIT;
+
+--connection con3b
+reap;
+COMMIT;
+
+--connection default
+SELECT * FROM t WHERE id IN (3,4);
+--disable_query_log
+eval SELECT variable_value - $deadlocks AS new_deadlocks
+FROM information_schema.global_status WHERE variable_name = 'Innodb_deadlocks';
+--enable_query_log
+--let SEARCH_PATTERN= deadlock_check\(\): cycle found
+--source include/search_pattern_in_file.inc
+--let SEARCH_PATTERN= deadlock_check\(\): no cycle
+--source include/search_pattern_in_file.inc
+UPDATE t SET v = 0;
+
+--echo #
+--echo # Case 3: one release extends a chain and creates a cycle
+--echo #
+--connection default
+LET $deadlocks= `SELECT variable_value FROM information_schema.global_status
+                 WHERE variable_name = 'Innodb_deadlocks'`;
+BEGIN;
+SELECT * FROM t WHERE id IN (1,3) LOCK IN SHARE MODE;
+
+--connection con4a
+BEGIN;
+SELECT * FROM t WHERE id = 1 LOCK IN SHARE MODE;
+
+--connection con4b
+BEGIN;
+SELECT * FROM t WHERE id = 3 LOCK IN SHARE MODE;
+
+--connection con3a
+BEGIN;
+send UPDATE t SET v = v + 1 WHERE id = 1;
+
+--connection con3b
+LET $wait_condition= SELECT COUNT(*) = 1 FROM information_schema.innodb_trx
+                     WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+BEGIN;
+send UPDATE t SET v = v + 1 WHERE id = 3;
+
+--connection con2a
+LET $wait_condition= SELECT COUNT(*) = 2 FROM information_schema.innodb_trx
+                     WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+BEGIN;
+INSERT INTO heavy VALUES (1),(2),(3),(4),(5),(6),(7),(8);
+UPDATE t SET v = v + 1 WHERE id = 2;
+send UPDATE t SET v = v + 1 WHERE id = 1;
+
+--connection con5b
+LET $wait_condition= SELECT COUNT(*) = 3 FROM information_schema.innodb_trx
+                     WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+BEGIN;
+UPDATE t SET v = v + 1 WHERE id = 4;
+
+--connection con4a
+send UPDATE t SET v = v + 1 WHERE id = 2;
+
+--connection con4b
+LET $wait_condition= SELECT COUNT(*) = 4 FROM information_schema.innodb_trx
+                     WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+send UPDATE t SET v = v + 1 WHERE id = 4;
+
+--connection default
+LET $wait_condition= SELECT COUNT(*) = 5 FROM information_schema.innodb_trx
+                     WHERE trx_state = 'LOCK WAIT';
+--source include/wait_condition.inc
+COMMIT;
+
+--connection con4a
+--error ER_LOCK_DEADLOCK
+reap;
+
+--connection con3a
+reap;
+COMMIT;
+
+--connection con2a
+reap;
+COMMIT;
+
+--connection con5b
+COMMIT;
+
+--connection con4b
+reap;
+COMMIT;
+
+--connection con3b
+reap;
+COMMIT;
+
+--connection default
+SELECT * FROM t;
+--disable_query_log
+eval SELECT variable_value - $deadlocks AS new_deadlocks
+FROM information_schema.global_status WHERE variable_name = 'Innodb_deadlocks';
+--enable_query_log
+# The order of Deadlock::to_check decides whether the check without a
+# cycle runs before lock_sys.latch is acquired, so count only cycles.
+--let SEARCH_PATTERN= deadlock_check\(\): cycle found
+--source include/search_pattern_in_file.inc
+SET SESSION debug_dbug= @save_dbug;
+
+--disconnect con2a
+--disconnect con3a
+--disconnect con4a
+--disconnect con3b
+--disconnect con4b
+--disconnect con5b
+DROP TABLE t, heavy;

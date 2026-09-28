@@ -7307,7 +7307,7 @@ and less modified rows. Bit 0 is used to prefer orig_trx in case of a tie.
   static trx_t *report(trx_t *const trx, bool current_trx)
   {
     mysql_mutex_assert_owner(&lock_sys.wait_mutex);
-    ut_ad(xtest() || lock_sys.is_writer() == !current_trx);
+    ut_ad(lock_sys.is_writer() == !current_trx);
 
     /* Normally, trx should be a direct part of the deadlock
     cycle. However, if innodb_deadlock_detect had been OFF in the
@@ -7538,15 +7538,11 @@ static lock_t *Deadlock::check_and_resolve(trx_t *trx, lock_t *wait_lock)
 }
 
 /** Check for deadlocks while holding only lock_sys.wait_mutex. */
-TRANSACTIONAL_TARGET
 void lock_sys_t::deadlock_check()
 {
   ut_ad(!is_writer());
   mysql_mutex_assert_owner(&wait_mutex);
   bool acquired= false;
-#if !defined NO_ELISION && !defined SUX_LOCK_GENERIC
-  bool elided= false;
-#endif
 
   if (Deadlock::to_be_checked)
   {
@@ -7555,17 +7551,26 @@ void lock_sys_t::deadlock_check()
       auto i= Deadlock::to_check.begin();
       if (i == Deadlock::to_check.end())
         break;
+      trx_t *trx= *i;
+      /* Deadlock::find_cycle() only requires lock_sys.wait_mutex.
+      Acquire the exclusive lock_sys.latch only when a cycle exists,
+      because Deadlock::report() needs it to choose and roll back a
+      victim. Holding it blocks every concurrent lock_sys.rd_lock(),
+      such as in lock_rec_lock() and lock_table(). A transaction that
+      starts to wait meanwhile finds any cycle that it closes in
+      Deadlock::check_and_resolve(). */
       if (acquired);
-#if !defined NO_ELISION && !defined SUX_LOCK_GENERIC
-      else if (xbegin())
+      else if (!Deadlock::find_cycle(trx))
       {
-        if (latch.is_locked_or_waiting())
-          xabort();
-        acquired= elided= true;
+        DBUG_EXECUTE_IF("innodb_deadlock_check_trace",
+                        ib::info() << "deadlock_check(): no cycle";);
+        Deadlock::to_check.erase(i);
+        continue;
       }
-#endif
       else
       {
+        DBUG_EXECUTE_IF("innodb_deadlock_check_trace",
+                        ib::info() << "deadlock_check(): cycle found";);
         acquired= wr_lock_try();
         if (!acquired)
         {
@@ -7576,7 +7581,6 @@ void lock_sys_t::deadlock_check()
           continue;
         }
       }
-      trx_t *trx= *i;
       Deadlock::to_check.erase(i);
       if (Deadlock::find_cycle(trx))
         Deadlock::report(trx, false);
@@ -7584,10 +7588,6 @@ void lock_sys_t::deadlock_check()
     Deadlock::to_be_checked= false;
   }
   ut_ad(Deadlock::to_check.empty());
-#if !defined NO_ELISION && !defined SUX_LOCK_GENERIC
-  if (elided)
-    return;
-#endif
   if (acquired)
     wr_unlock();
 }

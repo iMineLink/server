@@ -294,11 +294,19 @@ lock_sys.latch, trx->mutex or both. */
 struct trx_lock_t
 {
   /** Lock request being waited for.
-  Set to nonnull when holding lock_sys.latch, lock_sys.wait_mutex and
-  trx->mutex, by the thread that is executing the transaction.
+  Set to nonnull while holding trx->mutex and either the exclusive
+  lock_sys.latch, or the shared lock_sys.latch together with the lock_sys
+  hash cell latch or dict_table_t::lock_mutex: by the thread that is
+  executing the transaction when a lock wait starts, or by another thread
+  that moves a waiting record lock to a different page or heap number.
   Set to nullptr when holding lock_sys.wait_mutex. */
   Atomic_relaxed<lock_t*> wait_lock;
-  /** Transaction being waited for; protected by lock_sys.wait_mutex */
+  /** Transaction being waited for.
+  Set to nonnull when a lock wait starts, by the thread that is executing
+  the transaction, while holding trx->mutex and either the exclusive
+  lock_sys.latch, or the shared lock_sys.latch together with the lock_sys
+  hash cell latch or dict_table_t::lock_mutex.
+  Otherwise modified only while holding lock_sys.wait_mutex. */
   trx_t *wait_trx;
   /** condition variable for !wait_lock; used with lock_sys.wait_mutex */
   pthread_cond_t cond;

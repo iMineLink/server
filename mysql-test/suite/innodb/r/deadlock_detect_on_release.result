@@ -1,0 +1,164 @@
+#
+# Deadlock detection for wait chains that a lock release creates
+#
+CREATE TABLE t(id INT PRIMARY KEY, v INT NOT NULL) ENGINE=InnoDB;
+INSERT INTO t VALUES (1,0),(2,0),(3,0),(4,0);
+CREATE TABLE heavy(a INT) ENGINE=InnoDB;
+connect  con2a,localhost,root,,;
+connect  con3a,localhost,root,,;
+connect  con4a,localhost,root,,;
+connect  con3b,localhost,root,,;
+connect  con4b,localhost,root,,;
+connect  con5b,localhost,root,,;
+connection default;
+SET @save_dbug= @@SESSION.debug_dbug;
+SET SESSION debug_dbug= '+d,innodb_deadlock_check_trace';
+#
+# Case 1: the release creates a cycle; the committing thread detects it
+#
+connection default;
+BEGIN;
+SELECT * FROM t WHERE id = 1 LOCK IN SHARE MODE;
+id	v
+1	0
+connection con4a;
+BEGIN;
+SELECT * FROM t WHERE id = 1 LOCK IN SHARE MODE;
+id	v
+1	0
+connection con3a;
+BEGIN;
+UPDATE t SET v = v + 1 WHERE id = 1;
+connection con2a;
+BEGIN;
+INSERT INTO heavy VALUES (1),(2),(3),(4),(5),(6),(7),(8);
+UPDATE t SET v = v + 1 WHERE id = 2;
+UPDATE t SET v = v + 1 WHERE id = 1;
+connection con4a;
+UPDATE t SET v = v + 1 WHERE id = 2;
+connection default;
+COMMIT;
+connection con4a;
+ERROR 40001: Deadlock found when trying to get lock; try restarting transaction
+connection con3a;
+COMMIT;
+connection con2a;
+COMMIT;
+connection default;
+SELECT * FROM t WHERE id IN (1,2);
+id	v
+1	2
+2	1
+new_deadlocks
+1
+FOUND 1 /deadlock_check\(\): cycle found/ in mysqld.1.err
+NOT FOUND /deadlock_check\(\): no cycle/ in mysqld.1.err
+UPDATE t SET v = 0;
+#
+# Case 2: the release extends a wait chain without creating a cycle
+#
+connection default;
+BEGIN;
+SELECT * FROM t WHERE id = 3 LOCK IN SHARE MODE;
+id	v
+3	0
+connection con4b;
+BEGIN;
+SELECT * FROM t WHERE id = 3 LOCK IN SHARE MODE;
+id	v
+3	0
+connection con3b;
+BEGIN;
+UPDATE t SET v = v + 1 WHERE id = 3;
+connection con5b;
+BEGIN;
+UPDATE t SET v = v + 1 WHERE id = 4;
+connection con4b;
+UPDATE t SET v = v + 1 WHERE id = 4;
+connection default;
+COMMIT;
+connection con5b;
+COMMIT;
+connection con4b;
+COMMIT;
+connection con3b;
+COMMIT;
+connection default;
+SELECT * FROM t WHERE id IN (3,4);
+id	v
+3	1
+4	2
+new_deadlocks
+0
+FOUND 1 /deadlock_check\(\): cycle found/ in mysqld.1.err
+FOUND 1 /deadlock_check\(\): no cycle/ in mysqld.1.err
+UPDATE t SET v = 0;
+#
+# Case 3: one release extends a chain and creates a cycle
+#
+connection default;
+BEGIN;
+SELECT * FROM t WHERE id IN (1,3) LOCK IN SHARE MODE;
+id	v
+1	0
+3	0
+connection con4a;
+BEGIN;
+SELECT * FROM t WHERE id = 1 LOCK IN SHARE MODE;
+id	v
+1	0
+connection con4b;
+BEGIN;
+SELECT * FROM t WHERE id = 3 LOCK IN SHARE MODE;
+id	v
+3	0
+connection con3a;
+BEGIN;
+UPDATE t SET v = v + 1 WHERE id = 1;
+connection con3b;
+BEGIN;
+UPDATE t SET v = v + 1 WHERE id = 3;
+connection con2a;
+BEGIN;
+INSERT INTO heavy VALUES (1),(2),(3),(4),(5),(6),(7),(8);
+UPDATE t SET v = v + 1 WHERE id = 2;
+UPDATE t SET v = v + 1 WHERE id = 1;
+connection con5b;
+BEGIN;
+UPDATE t SET v = v + 1 WHERE id = 4;
+connection con4a;
+UPDATE t SET v = v + 1 WHERE id = 2;
+connection con4b;
+UPDATE t SET v = v + 1 WHERE id = 4;
+connection default;
+COMMIT;
+connection con4a;
+ERROR 40001: Deadlock found when trying to get lock; try restarting transaction
+connection con3a;
+COMMIT;
+connection con2a;
+COMMIT;
+connection con5b;
+COMMIT;
+connection con4b;
+COMMIT;
+connection con3b;
+COMMIT;
+connection default;
+SELECT * FROM t;
+id	v
+1	2
+2	1
+3	1
+4	2
+new_deadlocks
+1
+FOUND 2 /deadlock_check\(\): cycle found/ in mysqld.1.err
+SET SESSION debug_dbug= @save_dbug;
+disconnect con2a;
+disconnect con3a;
+disconnect con4a;
+disconnect con3b;
+disconnect con4b;
+disconnect con5b;
+DROP TABLE t, heavy;

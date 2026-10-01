@@ -1658,13 +1658,13 @@ bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
   /* A record pointer stays valid while the block holds the same page and
   its modify_clock has not moved: eviction, deletion and reorganization
   all advance the clock, and an insertion moves no record. Try the record
-  where the previous search of this leaf landed and the record after it,
-  and nothing further, because the binary search is what the step
+  where the previous search of this leaf landed and the records before and
+  after it, and nothing further, because the binary search is what the step
   replaces. */
   const bool step_valid= step && step->block == block &&
     step->modify_clock == block->modify_clock;
   const bool stepped= step_valid && step->expect &&
-    page_cur_search_forward(tuple, step->rec, &up, &low, &cur);
+    page_cur_search_near(tuple, step->rec, &up, &low, &cur);
 #ifdef UNIV_DEBUG
   if (stepped)
   {
@@ -1717,10 +1717,13 @@ bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
   {
     /* A failed step costs comparisons whose outcome no branch predictor
     can guess, so try the next one only where this search landed where a
-    step would have: on the previous record or right after it. */
+    step would have: on the previous record or right before or after it. The
+    record right before it is told by its successor, one link away, because
+    finding a predecessor takes a walk of the page directory. */
     step->expect= stepped ||
       (step_valid && (cur.rec == step->rec ||
-                      cur.rec == page_rec_get_next_const(step->rec)));
+                      cur.rec == page_rec_get_next_const(step->rec) ||
+                      page_rec_get_next_const(cur.rec) == step->rec));
     step->block= block;
     step->modify_clock= block->modify_clock;
     step->rec= cur.rec;

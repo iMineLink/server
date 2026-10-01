@@ -807,9 +807,9 @@ static bool page_cur_try_search_shortcut(const page_t *page, const rec_t *rec,
   return true;
 }
 
-bool page_cur_search_forward(const dtuple_t *tuple, const rec_t *rec,
-                             uint16_t *iup_fields, uint16_t *ilow_fields,
-                             page_cur_t *cursor) noexcept
+bool page_cur_search_near(const dtuple_t *tuple, const rec_t *rec,
+                          uint16_t *iup_fields, uint16_t *ilow_fields,
+                          page_cur_t *cursor) noexcept
 {
   const dict_index_t &index= *cursor->index;
   const page_t *const page= cursor->block->page.frame;
@@ -826,15 +826,27 @@ bool page_cur_search_forward(const dtuple_t *tuple, const rec_t *rec,
   uint16_t low= 0, up= 0;
   int cmp= page_cur_dtuple_cmp(*tuple, rec, index, &low, comp);
   if (cmp < 0)
-    return false;
-
-  /* rec sorts below tuple. The search lands on rec when the record after it
-  is the supremum or sorts above tuple, and on that record when it equals
-  tuple; a record after it that sorts below tuple is left to the binary
-  search. Nothing bounds the fields that tuple shares with the record after
-  rec, so that comparison starts from 0 fields. */
-  if (cmp)
   {
+    /* rec sorts above tuple. The search lands on the record before rec when
+    that record does not sort above tuple, and rec is then the upper limit.
+    Nothing bounds the fields that tuple shares with the record before rec,
+    so that comparison starts from 0 fields. */
+    up= low;
+    low= 0;
+    const rec_t *const prev= page_rec_get_prev_const(rec);
+    if (!prev || page_rec_is_infimum(prev) ||
+        rec_get_info_bits(prev, comp) & REC_INFO_MIN_REC_FLAG ||
+        page_cur_dtuple_cmp(*tuple, prev, index, &low, comp) < 0)
+      return false;
+    rec= prev;
+  }
+  else if (cmp)
+  {
+    /* rec sorts below tuple. The search lands on rec when the record after
+    it is the supremum or sorts above tuple, and on that record when it
+    equals tuple; a record after it that sorts below tuple is left to the
+    binary search. Nothing bounds the fields that tuple shares with the
+    record after rec, so that comparison starts from 0 fields. */
     const rec_t *const next= comp
       ? page_rec_next_get<true>(page, rec)
       : page_rec_next_get<false>(page, rec);

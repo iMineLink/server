@@ -443,6 +443,69 @@ commit;
 
 drop table t15;
 
+# The clustered order walked backward. Every lookup lands on the record right
+# before the one that the lookup before it landed on, so the remembered leaf
+# answers it, and the search inside that leaf starts from the previous landing
+# and steps back one record. The counts are those of a forward walk, because
+# the step changes only the search inside a leaf; the comparisons that a debug
+# build makes against a full search of the leaf are what check the step. The
+# first scan follows a secondary key that falls as the primary key rises, and
+# the second reads a secondary key that rises with it in descending order.
+# The row that the second query returns is the last one that it reads, which
+# shows the order of the scan.
+create table t16 (
+  pk int not null primary key,
+  k_inv int,
+  k int,
+  val int
+) engine=innodb row_format=dynamic;
+
+insert into t16 select seq, 10001-seq, seq, seq from seq_1_to_10000;
+
+create index k_inv_idx on t16(k_inv);
+create index k_idx on t16(k);
+
+analyze table t16 persistent for all;
+
+let $out_inv=`analyze format=json select sql_no_cache val from t16 force index(k_inv_idx) where k_inv > 0`;
+evalp set @js='$out_inv';
+set @out=(select json_extract(@js,'$**.r_engine_stats.pages_accessed'));
+select cast(json_extract(@out,'$[0]') as UNSIGNED) as PAGES_ACCESSED_INVERSE;
+
+let $out_desc=`analyze format=json select sql_no_cache val from t16 force index(k_idx) where k > 0 order by k desc limit 9999,1`;
+evalp set @js='$out_desc';
+set @out=(select json_extract(@js,'$**.r_engine_stats.pages_accessed'));
+select cast(json_extract(@out,'$[0]') as UNSIGNED) as PAGES_ACCESSED_DESCENDING;
+
+select val as LAST_ROW_DESCENDING from t16 force index(k_idx)
+  where k > 0 order by k desc limit 9999,1;
+
+drop table t16;
+
+# The backward walk under ROW_FORMAT=REDUNDANT, where the step finds the
+# record before through the other record format. The instant ADD COLUMN puts
+# a metadata pseudo-record at the start of the leftmost leaf, where the walk
+# ends, and leaves every row with fewer fields than the table has. No lookup
+# steps back onto that pseudo-record, because the row with the lowest key is
+# the last one that the walk looks up.
+create table t17 (
+  pk int not null primary key,
+  k_inv int,
+  val int
+) engine=innodb row_format=redundant;
+
+insert into t17 select seq, 10001-seq, seq from seq_1_to_10000;
+
+alter table t17 add column c int default 42, algorithm=instant;
+
+create index k_inv_idx on t17(k_inv);
+
+select count(val) as ROWS_REDUNDANT_INVERSE, sum(val) as SUM_REDUNDANT_INVERSE,
+  min(c) as DEFAULT_C_INVERSE
+  from t17 force index(k_inv_idx) where k_inv > 0;
+
+drop table t17;
+
 --disable_query_log
 if ($adaptive_hash_index)
 {

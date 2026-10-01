@@ -257,3 +257,45 @@ ROWS_SNAPSHOT	SUM_SNAPSHOT
 10000	50005000
 commit;
 drop table t15;
+create table t16 (
+pk int not null primary key,
+k_inv int,
+k int,
+val int
+) engine=innodb row_format=dynamic;
+insert into t16 select seq, 10001-seq, seq, seq from seq_1_to_10000;
+create index k_inv_idx on t16(k_inv);
+create index k_idx on t16(k);
+analyze table t16 persistent for all;
+Table	Op	Msg_type	Msg_text
+test.t16	analyze	status	Engine-independent statistics collected
+test.t16	analyze	status	OK
+set @js='$out_inv';
+set @out=(select json_extract(@js,'$**.r_engine_stats.pages_accessed'));
+select cast(json_extract(@out,'$[0]') as UNSIGNED) as PAGES_ACCESSED_INVERSE;
+PAGES_ACCESSED_INVERSE
+10047
+set @js='$out_desc';
+set @out=(select json_extract(@js,'$**.r_engine_stats.pages_accessed'));
+select cast(json_extract(@out,'$[0]') as UNSIGNED) as PAGES_ACCESSED_DESCENDING;
+PAGES_ACCESSED_DESCENDING
+10047
+select val as LAST_ROW_DESCENDING from t16 force index(k_idx)
+where k > 0 order by k desc limit 9999,1;
+LAST_ROW_DESCENDING
+1
+drop table t16;
+create table t17 (
+pk int not null primary key,
+k_inv int,
+val int
+) engine=innodb row_format=redundant;
+insert into t17 select seq, 10001-seq, seq from seq_1_to_10000;
+alter table t17 add column c int default 42, algorithm=instant;
+create index k_inv_idx on t17(k_inv);
+select count(val) as ROWS_REDUNDANT_INVERSE, sum(val) as SUM_REDUNDANT_INVERSE,
+min(c) as DEFAULT_C_INVERSE
+from t17 force index(k_inv_idx) where k_inv > 0;
+ROWS_REDUNDANT_INVERSE	SUM_REDUNDANT_INVERSE	DEFAULT_C_INVERSE
+10000	50005000	42
+drop table t17;

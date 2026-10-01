@@ -1663,7 +1663,7 @@ bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
   replaces. */
   const bool step_valid= step && step->block == block &&
     step->modify_clock == block->modify_clock;
-  const bool stepped= step_valid && step->expect &&
+  const bool stepped= step_valid &&
     page_cur_search_forward(tuple, step->rec, &up, &low, &cur);
 #ifdef UNIV_DEBUG
   if (stepped)

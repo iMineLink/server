@@ -1657,13 +1657,14 @@ bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
 
   /* A record pointer stays valid while the block holds the same page and
   its modify_clock has not moved: eviction, deletion and reorganization
-  all advance the clock, and an insertion moves no record. Start from the
-  record where the previous search of this leaf landed, and walk forward
-  only a little, because the binary search is what the step replaces. */
+  all advance the clock, and an insertion moves no record. Try the record
+  where the previous search of this leaf landed and the record after it,
+  and nothing further, because the binary search is what the step
+  replaces. */
   const bool step_valid= step && step->block == block &&
     step->modify_clock == block->modify_clock;
   const bool stepped= step_valid && step->expect &&
-    page_cur_search_forward(tuple, step->rec, 0, &up, &low, &cur);
+    page_cur_search_forward(tuple, step->rec, &up, &low, &cur);
 #ifdef UNIV_DEBUG
   if (stepped)
   {

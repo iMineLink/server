@@ -808,9 +808,8 @@ static bool page_cur_try_search_shortcut(const page_t *page, const rec_t *rec,
 }
 
 bool page_cur_search_forward(const dtuple_t *tuple, const rec_t *rec,
-                             ulint max_steps, uint16_t *iup_fields,
-                             uint16_t *ilow_fields, page_cur_t *cursor)
-  noexcept
+                             uint16_t *iup_fields, uint16_t *ilow_fields,
+                             page_cur_t *cursor) noexcept
 {
   const dict_index_t &index= *cursor->index;
   const page_t *const page= cursor->block->page.frame;
@@ -829,20 +828,20 @@ bool page_cur_search_forward(const dtuple_t *tuple, const rec_t *rec,
   if (cmp < 0)
     return false;
 
-  /* rec sorts at or below tuple. Walk forward to the last record that does:
-  the record after it is the supremum or sorts above tuple. Nothing bounds
-  the fields that tuple shares with a later record, so each comparison
-  starts from 0 fields. */
+  /* rec sorts below tuple. The search lands on rec when the record after it
+  is the supremum or sorts above tuple, and on that record when it equals
+  tuple; a record after it that sorts below tuple is left to the binary
+  search. Nothing bounds the fields that tuple shares with the record after
+  rec, so that comparison starts from 0 fields. */
   if (cmp)
-    for (ulint i= 0;; i++)
+  {
+    const rec_t *const next= comp
+      ? page_rec_next_get<true>(page, rec)
+      : page_rec_next_get<false>(page, rec);
+    if (!next)
+      return false;
+    if (next != page + (comp ? PAGE_NEW_SUPREMUM : PAGE_OLD_SUPREMUM))
     {
-      const rec_t *const next= comp
-        ? page_rec_next_get<true>(page, rec)
-        : page_rec_next_get<false>(page, rec);
-      if (!next)
-        return false;
-      if (next == page + (comp ? PAGE_NEW_SUPREMUM : PAGE_OLD_SUPREMUM))
-        break;
       if (comp)
         switch (rec_get_status(next)) {
         case REC_STATUS_INSTANT:
@@ -851,18 +850,17 @@ bool page_cur_search_forward(const dtuple_t *tuple, const rec_t *rec,
         default:
           return false;
         }
-      up= 0;
       cmp= page_cur_dtuple_cmp(*tuple, next, index, &up, comp);
-      if (cmp < 0)
-        break;
-      rec= next;
-      low= up;
-      up= 0;
-      if (!cmp)
-        break;
-      if (i == max_steps)
+      if (cmp > 0)
         return false;
+      if (!cmp)
+      {
+        rec= next;
+        low= up;
+        up= 0;
+      }
     }
+  }
 
   page_cur_position(rec, cursor->block, cursor);
   *iup_fields= up;

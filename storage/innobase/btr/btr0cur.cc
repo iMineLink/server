@@ -1615,7 +1615,7 @@ release_tree:
 }
 
 bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
-                              mtr_t *mtr) noexcept
+                              btr_leaf_step *step, mtr_t *mtr) noexcept
 {
   /* A clustered index only: the checks below accept FIL_PAGE_RTREE, which
   search_leaf() rejects, and no page of a clustered index is an R-tree. */
@@ -1654,9 +1654,33 @@ bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
   page_cur_t cur{page_cur};
   cur.block= block;
   uint16_t up= 0, low= 0;
-  if (page_cur_search_with_match(tuple, PAGE_CUR_LE, &up, &low, &cur,
-                                 nullptr) ||
-      page_rec_is_infimum(cur.rec))
+
+  /* A record pointer stays valid while the block holds the same page and
+  its modify_clock has not moved: eviction, deletion and reorganization
+  all advance the clock, and an insertion moves no record. Start from the
+  record where the previous search of this leaf landed, and walk forward
+  only a little, because the binary search is what the step replaces. */
+  const bool step_valid= step && step->block == block &&
+    step->modify_clock == block->modify_clock;
+  const bool stepped= step_valid && step->expect &&
+    page_cur_search_forward(tuple, step->rec, 0, &up, &low, &cur);
+#ifdef UNIV_DEBUG
+  if (stepped)
+  {
+    page_cur_t check{page_cur};
+    check.block= block;
+    uint16_t check_up= 0, check_low= 0;
+    ut_a(!page_cur_search_with_match(tuple, PAGE_CUR_LE, &check_up,
+                                     &check_low, &check, nullptr));
+    ut_a(check.rec == cur.rec);
+    ut_a(check_low == low);
+  }
+#endif /* UNIV_DEBUG */
+
+  if (!stepped &&
+      (page_cur_search_with_match(tuple, PAGE_CUR_LE, &up, &low, &cur,
+                                  nullptr) ||
+       page_rec_is_infimum(cur.rec)))
   {
     /* Corruption, or tuple precedes every record on this page: its
     predecessor, if any, is on an earlier leaf. */
@@ -1687,6 +1711,19 @@ bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
   buf_page_try_get() does not do: a leaf that a correlated scan reads once
   per row must not look less recently used than one reached by descent. */
   buf_page_make_young_if_needed(&block->page);
+
+  if (step)
+  {
+    /* A failed step costs comparisons whose outcome no branch predictor
+    can guess, so try the next one only where this search landed where a
+    step would have: on the previous record or right after it. */
+    step->expect= stepped ||
+      (step_valid && (cur.rec == step->rec ||
+                      cur.rec == page_rec_get_next_const(step->rec)));
+    step->block= block;
+    step->modify_clock= block->modify_clock;
+    step->rec= cur.rec;
+  }
 
   page_cur= cur;
   up_match= up;

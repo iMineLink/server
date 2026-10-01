@@ -506,6 +506,8 @@ struct clust_leaf_hint_slot {
 	uint32_t	last_buf_size;	/*!< allocated size of last_buf. A
 					record prefix is bounded by the page
 					size, so 32 bits hold either size */
+	btr_leaf_step	step;		/*!< where the last search of this leaf
+					landed */
 };
 
 /** Number of clustered leaf pages that a handle remembers, kept in most

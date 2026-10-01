@@ -3535,7 +3535,7 @@ static bool row_sel_clust_leaf_hint_search(row_prebuilt_t *prebuilt,
 
   for (ulint i= 0; i < n; i++)
   {
-    const clust_leaf_hint_slot &hint= hints[mru[i]];
+    clust_leaf_hint_slot &hint= hints[mru[i]];
     if (!row_sel_clust_leaf_hint_covers(hint, prebuilt->clust_ref, index))
       continue;
 
@@ -3544,7 +3544,7 @@ static bool row_sel_clust_leaf_hint_search(row_prebuilt_t *prebuilt,
     descent resolves whatever this one cannot. */
     if (prebuilt->clust_pcur->btr_cur.try_leaf_hint(
           prebuilt->clust_ref,
-          page_id_t(index->table->space_id, hint.page_no), mtr))
+          page_id_t(index->table->space_id, hint.page_no), &hint.step, mtr))
     {
       /* A hit takes one off the count rather than clearing it, so that the
       count follows the answer rate of the scan and not the length of its
@@ -3713,6 +3713,12 @@ static void row_sel_clust_leaf_hint_remember(row_prebuilt_t *prebuilt,
                                     &prebuilt->heap);
   }
   hint.page_no= page_no;
+
+  const rec_t *const rec= prebuilt->clust_pcur->btr_cur.page_cur.rec;
+  hint.step.block= page_rec_is_user_rec(rec) ? block : nullptr;
+  hint.step.modify_clock= block->modify_clock;
+  hint.step.rec= rec;
+  hint.step.expect= true;
 }
 
 /*********************************************************************//**

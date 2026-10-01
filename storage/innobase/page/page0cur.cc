@@ -807,6 +807,69 @@ static bool page_cur_try_search_shortcut(const page_t *page, const rec_t *rec,
   return true;
 }
 
+bool page_cur_search_forward(const dtuple_t *tuple, const rec_t *rec,
+                             ulint max_steps, uint16_t *iup_fields,
+                             uint16_t *ilow_fields, page_cur_t *cursor)
+  noexcept
+{
+  const dict_index_t &index= *cursor->index;
+  const page_t *const page= cursor->block->page.frame;
+  ut_ad(page_is_leaf(page));
+  ut_ad(page_align(rec) == page);
+  ut_ad(page_rec_is_user_rec(rec));
+  const auto comp= page_is_comp(page);
+
+  /* The metadata pseudo-record compares below every key on 0 fields, which
+  only the binary search accounts for. */
+  if (rec_get_info_bits(rec, comp) & REC_INFO_MIN_REC_FLAG)
+    return false;
+
+  uint16_t low= 0, up= 0;
+  int cmp= page_cur_dtuple_cmp(*tuple, rec, index, &low, comp);
+  if (cmp < 0)
+    return false;
+
+  /* rec sorts at or below tuple. Walk forward to the last record that does:
+  the record after it is the supremum or sorts above tuple. Nothing bounds
+  the fields that tuple shares with a later record, so each comparison
+  starts from 0 fields. */
+  if (cmp)
+    for (ulint i= 0;; i++)
+    {
+      const rec_t *const next= comp
+        ? page_rec_next_get<true>(page, rec)
+        : page_rec_next_get<false>(page, rec);
+      if (!next)
+        return false;
+      if (next == page + (comp ? PAGE_NEW_SUPREMUM : PAGE_OLD_SUPREMUM))
+        break;
+      if (comp)
+        switch (rec_get_status(next)) {
+        case REC_STATUS_INSTANT:
+        case REC_STATUS_ORDINARY:
+          break;
+        default:
+          return false;
+        }
+      up= 0;
+      cmp= page_cur_dtuple_cmp(*tuple, next, index, &up, comp);
+      if (cmp < 0)
+        break;
+      rec= next;
+      low= up;
+      up= 0;
+      if (!cmp)
+        break;
+      if (i == max_steps)
+        return false;
+    }
+
+  page_cur_position(rec, cursor->block, cursor);
+  *iup_fields= up;
+  *ilow_fields= low;
+  return true;
+}
+
 bool page_cur_search_with_match(const dtuple_t *tuple, page_cur_mode_t mode,
                                 uint16_t *iup_fields, uint16_t *ilow_fields,
                                 page_cur_t *cursor, rtr_info_t *rtr_info)

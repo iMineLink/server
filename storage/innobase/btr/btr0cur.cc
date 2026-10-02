@@ -1615,7 +1615,7 @@ release_tree:
 }
 
 bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
-                              btr_leaf_step *step, mtr_t *mtr) noexcept
+                              btr_leaf_step &step, mtr_t *mtr) noexcept
 {
   /* A clustered index only: the checks below accept FIL_PAGE_RTREE, which
   search_leaf() rejects, and no page of a clustered index is an R-tree. */
@@ -1661,10 +1661,10 @@ bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
   where the previous search of this leaf landed and the records before and
   after it, and nothing further, because the binary search is what the step
   replaces. */
-  const bool step_valid= step && step->block == block &&
-    step->modify_clock == block->modify_clock;
-  const bool stepped= step_valid && step->expect &&
-    page_cur_search_near(tuple, step->rec, &up, &low, &cur);
+  const bool step_valid= step.block == block &&
+    step.modify_clock == block->modify_clock;
+  const bool stepped= step_valid && step.expect &&
+    page_cur_search_near(tuple, step.rec, &up, &low, &cur);
 #ifdef UNIV_DEBUG
   if (stepped)
   {
@@ -1714,21 +1714,18 @@ bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
   per row must not look less recently used than one reached by descent. */
   buf_page_make_young_if_needed(&block->page);
 
-  if (step)
-  {
-    /* A failed step costs comparisons whose outcome no branch predictor
-    can guess, so try the next one only where this search landed where a
-    step would have: on the previous record or right before or after it. The
-    record right before it is told by its successor, one link away, because
-    finding a predecessor takes a walk of the page directory. */
-    step->expect= stepped ||
-      (step_valid && (cur.rec == step->rec ||
-                      cur.rec == page_rec_get_next_const(step->rec) ||
-                      page_rec_get_next_const(cur.rec) == step->rec));
-    step->block= block;
-    step->modify_clock= block->modify_clock;
-    step->rec= cur.rec;
-  }
+  /* A failed step costs comparisons whose outcome no branch predictor can
+  guess, so try the next one only where this search landed where a step
+  would have: on the previous record or right before or after it. The record
+  right before it is told by its successor, one link away, because finding a
+  predecessor takes a walk of the page directory. */
+  step.expect= stepped ||
+    (step_valid && (cur.rec == step.rec ||
+                    cur.rec == page_rec_get_next_const(step.rec) ||
+                    page_rec_get_next_const(cur.rec) == step.rec));
+  step.block= block;
+  step.modify_clock= block->modify_clock;
+  step.rec= cur.rec;
 
   page_cur= cur;
   up_match= up;

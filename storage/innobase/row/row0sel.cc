@@ -3544,7 +3544,7 @@ static bool row_sel_clust_leaf_hint_search(row_prebuilt_t *prebuilt,
     descent resolves whatever this one cannot. */
     if (prebuilt->clust_pcur->btr_cur.try_leaf_hint(
           prebuilt->clust_ref,
-          page_id_t(index->table->space_id, hint.page_no), &hint.step, mtr))
+          page_id_t(index->table->space_id, hint.page_no), hint.step, mtr))
     {
       /* A hit takes one off the count rather than clearing it, so that the
       count follows the answer rate of the scan and not the length of its

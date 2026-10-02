@@ -782,11 +782,11 @@ struct btr_cur_t {
   @param hint_page_id  remembered leaf page id
   @param step          where the previous search of this leaf landed, used
                        as the start of this one while still valid, and
-                       updated on success; or nullptr
+                       updated on success
   @param mtr           mini-transaction
   @return whether the cursor was positioned on the hinted leaf page */
   bool try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
-                     btr_leaf_step *step, mtr_t *mtr) noexcept;
+                     btr_leaf_step &step, mtr_t *mtr) noexcept;
 };
 
 /** Modify the delete-mark flag of a record.

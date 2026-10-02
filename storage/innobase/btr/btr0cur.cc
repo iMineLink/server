@@ -1705,8 +1705,9 @@ bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
     }
   }
 
-  /* Unlike search_leaf(), this feeds no btr_search_info_update(): a hit
-  already provides the direct leaf access the adaptive hash index would. */
+  /* This feeds no btr_search_info_update(). The caller tries a hint only
+  while the adaptive hash index is disabled, and search_leaf() feeds
+  nothing then either. */
 
   /* Age the page as the buf_page_get_gen() of a descent would, which
   buf_page_try_get() does not do: a leaf that a correlated scan reads once

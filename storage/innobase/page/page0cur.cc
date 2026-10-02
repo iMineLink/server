@@ -807,9 +807,9 @@ static bool page_cur_try_search_shortcut(const page_t *page, const rec_t *rec,
   return true;
 }
 
-int page_cur_search_near(const dtuple_t *tuple, const rec_t *rec,
-                         uint16_t *iup_fields, uint16_t *ilow_fields,
-                         page_cur_t *cursor) noexcept
+bool page_cur_search_near(const dtuple_t *tuple, const rec_t *rec,
+                          uint16_t *iup_fields, uint16_t *ilow_fields,
+                          page_cur_t *cursor) noexcept
 {
   const dict_index_t &index= *cursor->index;
   const page_t *const page= cursor->block->page.frame;
@@ -821,7 +821,7 @@ int page_cur_search_near(const dtuple_t *tuple, const rec_t *rec,
   /* The metadata pseudo-record compares below every key on 0 fields, which
   only the binary search accounts for. */
   if (rec_get_info_bits(rec, comp) & REC_INFO_MIN_REC_FLAG)
-    return 1;
+    return false;
 
   uint16_t low= 0, up= 0;
   int cmp= page_cur_dtuple_cmp(*tuple, rec, index, &low, comp);
@@ -835,23 +835,23 @@ int page_cur_search_near(const dtuple_t *tuple, const rec_t *rec,
     low= 0;
     const rec_t *const prev= page_rec_get_prev_const(rec);
     if (!prev)
-      return -1;
+      return false;
     if (page_rec_is_infimum(prev))
     {
       DBUG_EXECUTE_IF("ib_log_clust_leaf_hint_step_back",
                       ib::info() << "Clustered leaf hint step back "
                                     "reached the infimum";);
-      return -1;
+      return false;
     }
     if (rec_get_info_bits(prev, comp) & REC_INFO_MIN_REC_FLAG)
     {
       DBUG_EXECUTE_IF("ib_log_clust_leaf_hint_step_back",
                       ib::info() << "Clustered leaf hint step back "
                                     "reached the metadata record";);
-      return -1;
+      return false;
     }
     if (page_cur_dtuple_cmp(*tuple, prev, index, &low, comp) < 0)
-      return -1;
+      return false;
     rec= prev;
   }
   else if (cmp)
@@ -865,7 +865,7 @@ int page_cur_search_near(const dtuple_t *tuple, const rec_t *rec,
       ? page_rec_next_get<true>(page, rec)
       : page_rec_next_get<false>(page, rec);
     if (!next)
-      return 1;
+      return false;
     if (next != page + (comp ? PAGE_NEW_SUPREMUM : PAGE_OLD_SUPREMUM))
     {
       if (comp)
@@ -874,11 +874,11 @@ int page_cur_search_near(const dtuple_t *tuple, const rec_t *rec,
         case REC_STATUS_ORDINARY:
           break;
         default:
-          return 1;
+          return false;
         }
       cmp= page_cur_dtuple_cmp(*tuple, next, index, &up, comp);
       if (cmp > 0)
-        return 1;
+        return false;
       if (!cmp)
       {
         rec= next;
@@ -891,7 +891,7 @@ int page_cur_search_near(const dtuple_t *tuple, const rec_t *rec,
   page_cur_position(rec, cursor->block, cursor);
   *iup_fields= up;
   *ilow_fields= low;
-  return 0;
+  return true;
 }
 
 bool page_cur_search_with_match(const dtuple_t *tuple, page_cur_mode_t mode,

@@ -3794,7 +3794,7 @@ Row_sel_get_clust_rec_for_mysql::operator()(
 	static_assert(std::is_same<decltype(btr_search.enabled),
 				   Atomic_relaxed<bool>>::value,
 		      "use !btr_search.is_enabled(clust_index)");
-	const bool	use_hints = !btr_search.enabled;
+	const bool	use_hints = true;
 #else
 	const bool	use_hints = true;
 #endif /* BTR_CUR_HASH_ADAPT */

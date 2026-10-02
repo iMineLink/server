@@ -220,11 +220,12 @@ landed.
 @param iup_fields   matched fields in the upper limit record
 @param ilow_fields  matched fields in the low limit record
 @param cursor       page cursor
-@return whether the cursor was positioned; false when the search would land
-on none of the three records, and the cursor is then unchanged */
-bool page_cur_search_near(const dtuple_t *tuple, const rec_t *rec,
-                          uint16_t *iup_fields, uint16_t *ilow_fields,
-                          page_cur_t *cursor) noexcept;
+@return 0 when the cursor was positioned; otherwise the cursor is unchanged,
+and the result tells where the search lands: below the record before rec if
+negative, after rec if positive */
+int page_cur_search_near(const dtuple_t *tuple, const rec_t *rec,
+                         uint16_t *iup_fields, uint16_t *ilow_fields,
+                         page_cur_t *cursor) noexcept;
 
 MY_ATTRIBUTE((warn_unused_result))
 /** Search the right position for a page cursor.

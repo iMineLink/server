@@ -1663,8 +1663,10 @@ bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
   replaces. */
   const bool step_valid= step.block == block &&
     step.modify_clock == block->modify_clock;
-  const bool stepped= step_valid && step.expect &&
-    page_cur_search_near(tuple, step.rec, &up, &low, &cur);
+  const bool step_tried= step_valid && step.expect;
+  const int step_side= step_tried
+    ? page_cur_search_near(tuple, step.rec, &up, &low, &cur) : 0;
+  const bool stepped= step_tried && !step_side;
 #ifdef UNIV_DEBUG
   if (stepped)
   {
@@ -1718,11 +1720,17 @@ bool btr_cur_t::try_leaf_hint(const dtuple_t *tuple, page_id_t hint_page_id,
   guess, so try the next one only where this search landed where a step
   would have: on the previous record or right before or after it. The record
   right before it is told by its successor, one link away, because finding a
-  predecessor takes a walk of the page directory. */
+  predecessor takes a walk of the page directory. A step that failed has
+  told which side the search went to: below the record before step.rec,
+  where none of the three can be, or after step.rec, where only the record
+  after it can. */
   step.expect= stepped ||
-    (step_valid && (cur.rec == step.rec ||
-                    cur.rec == page_rec_get_next_const(step.rec) ||
-                    page_rec_get_next_const(cur.rec) == step.rec));
+    (step_valid &&
+     (step_tried
+      ? step_side > 0 && cur.rec == page_rec_get_next_const(step.rec)
+      : cur.rec == step.rec ||
+        cur.rec == page_rec_get_next_const(step.rec) ||
+        page_rec_get_next_const(cur.rec) == step.rec));
   step.block= block;
   step.modify_clock= block->modify_clock;
   step.rec= cur.rec;

@@ -834,9 +834,23 @@ bool page_cur_search_near(const dtuple_t *tuple, const rec_t *rec,
     up= low;
     low= 0;
     const rec_t *const prev= page_rec_get_prev_const(rec);
-    if (!prev || page_rec_is_infimum(prev) ||
-        rec_get_info_bits(prev, comp) & REC_INFO_MIN_REC_FLAG ||
-        page_cur_dtuple_cmp(*tuple, prev, index, &low, comp) < 0)
+    if (!prev)
+      return false;
+    if (page_rec_is_infimum(prev))
+    {
+      DBUG_EXECUTE_IF("ib_log_clust_leaf_hint_step_back",
+                      ib::info() << "Clustered leaf hint step back "
+                                    "reached the infimum";);
+      return false;
+    }
+    if (rec_get_info_bits(prev, comp) & REC_INFO_MIN_REC_FLAG)
+    {
+      DBUG_EXECUTE_IF("ib_log_clust_leaf_hint_step_back",
+                      ib::info() << "Clustered leaf hint step back "
+                                    "reached the metadata record";);
+      return false;
+    }
+    if (page_cur_dtuple_cmp(*tuple, prev, index, &low, comp) < 0)
       return false;
     rec= prev;
   }

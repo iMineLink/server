@@ -3715,10 +3715,15 @@ static void row_sel_clust_leaf_hint_remember(row_prebuilt_t *prebuilt,
   hint.page_no= page_no;
 
   const rec_t *const rec= prebuilt->clust_pcur->btr_cur.page_cur.rec;
-  hint.step.block= page_rec_is_user_rec(rec) ? block : nullptr;
-  hint.step.modify_clock= block->modify_clock;
-  hint.step.rec= rec;
-  hint.step.expect= true;
+  if (!page_rec_is_user_rec(rec))
+    hint.step.block= nullptr;
+  else
+  {
+    hint.step.block= block;
+    hint.step.modify_clock= block->modify_clock;
+    hint.step.rec= rec;
+    hint.step.expect= true;
+  }
 }
 
 /*********************************************************************//**

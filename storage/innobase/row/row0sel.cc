@@ -3495,7 +3495,7 @@ static bool row_sel_clust_leaf_hint_armed(row_prebuilt_t *prebuilt)
 
   const unsigned misses= prebuilt->clust_leaf_hint_miss;
   if (misses < CLUST_LEAF_HINT_GIVE_UP)
-    return false;
+    return true;
 
   if (misses % CLUST_LEAF_HINT_RETRY)
   {

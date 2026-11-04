@@ -3434,6 +3434,20 @@ static buf_block_t *recv_recover_page(buf_block_t *block, mtr_t &mtr,
 				      block->page.id().page_no()));
 
 		log_phys_t::apply_status a= l->apply(*block, recs.last_offset);
+#ifndef DBUG_OFF
+		if (a != log_phys_t::APPLIED_NO && init_lsn
+		    && block->page.id().space()
+		    && block->page.id().page_no()
+		    && !srv_is_undo_tablespace(block->page.id().space())
+		    && DBUG_IF("recv_corrupt_fake_read")) {
+			sql_print_error("InnoDB: Simulating corruption on"
+					" [page id: space=%" PRIu32
+					", page number=%" PRIu32 "]",
+					block->page.id().space(),
+					block->page.id().page_no());
+			a = log_phys_t::APPLIED_CORRUPTED;
+		}
+#endif
 
 		switch (a) {
 		case log_phys_t::APPLIED_NO:
@@ -3679,6 +3693,10 @@ void IORequest::fake_read_complete(os_offset_t offset) const noexcept
     ut_ad(bpage->oldest_modification() || bpage->is_freed());
     bpage->lock.x_unlock(true);
   }
+  else
+    /* The page was evicted. Prevent the completion of recovery,
+    so that a checkpoint will not discard the log. */
+    log_set_corrupt();
   recs.being_processed= -1;
   ut_ad(mtr.has_committed());
 

@@ -1,0 +1,17 @@
+call mtr.add_suppression("InnoDB: Simulating corruption on \\[page id: space=");
+call mtr.add_suppression("InnoDB: Plugin initialization aborted");
+call mtr.add_suppression("Plugin 'InnoDB' (init function returned error|registration as a STORAGE ENGINE failed)");
+SET GLOBAL innodb_log_checkpoint_now=ON;
+CREATE TABLE t (a INT PRIMARY KEY) ENGINE=InnoDB;
+INSERT INTO t SELECT seq FROM seq_1_to_100;
+# Kill the server
+# restart: --debug-dbug=+d,recv_corrupt_fake_read
+FOUND 1 /InnoDB: Plugin initialization aborted at srv0start\.cc\[\d+\] with error/ in mysqld.1.err
+# restart
+CHECK TABLE t;
+Table	Op	Msg_type	Msg_text
+test.t	check	status	OK
+SELECT COUNT(*) FROM t;
+COUNT(*)
+100
+DROP TABLE t;

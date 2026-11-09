@@ -202,6 +202,7 @@ void mtr_t::start()
 
   m_last= nullptr;
   m_last_offset= 0;
+  m_last_lag= 0;
 
   new(&m_log) mtr_buf_t();
 
@@ -1034,7 +1035,7 @@ static lsn_t log_close(lsn_t lsn) noexcept
   return ((lsn - max_age) & ~lsn_t{1}) | lsn_t{furious};
 }
 
-inline void mtr_t::page_checksum(const buf_page_t &bpage)
+inline void mtr_t::page_checksum_low(const buf_page_t &bpage)
 {
   const byte *page= bpage.frame;
   size_t size= srv_page_size;
@@ -1077,6 +1078,13 @@ inline void mtr_t::page_checksum(const buf_page_t &bpage)
   m_log.close(l + 4);
 }
 
+#ifdef DBUG_OFF
+void mtr_t::page_checksum(const buf_page_t &bpage) noexcept
+{
+  page_checksum_low(bpage);
+}
+#endif
+
 std::pair<lsn_t,lsn_t> mtr_t::do_write() noexcept
 {
   ut_ad(!recv_no_log_write);
@@ -1098,7 +1106,7 @@ std::pair<lsn_t,lsn_t> mtr_t::do_write() noexcept
       {
         const buf_page_t &b= *static_cast<const buf_page_t*>(slot.object);
         if (!b.is_freed())
-          page_checksum(b);
+          page_checksum_low(b);
       }
   }
   while (0);

@@ -456,8 +456,10 @@ public:
   mini-transaction */
   bool has_no_log() const { return m_log.empty(); }
 
+#ifdef DBUG_OFF
   /** Write an OPT_PAGE_CHECKSUM record. */
-  inline void page_checksum(const buf_page_t &bpage);
+  void page_checksum(const buf_page_t &bpage) noexcept;
+#endif
 
   /** Write request types */
   enum write_type
@@ -672,6 +674,8 @@ private:
   void process_freed_pages();
   /** Release modified pages when no log was written. */
   void release_unlogged();
+  /** Write an OPT_PAGE_CHECKSUM record. */
+  inline void page_checksum_low(const buf_page_t &bpage);
 
   /** Log a write of a byte string to a page.
   @param block   buffer page
@@ -789,6 +793,10 @@ private:
   const buf_page_t* m_last;
   /** The current byte offset in m_last, or 0 */
   uint16_t m_last_offset;
+  /** The difference between m_last_offset and the end of the last record
+  that this mini-transaction wrote, as the recovery parser calculates it.
+  See mtr_t::memmove(). */
+  uint16_t m_last_lag;
 
   /** specifies which operations should be logged; default MTR_LOG_ALL */
   uint16_t m_log_mode:2;

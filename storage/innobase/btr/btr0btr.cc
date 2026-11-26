@@ -1539,11 +1539,96 @@ private:
     copy(next - shift, next, src_end - next);
   }
 
+  /** @return the length of mlog_encode_varint(i) */
+  static size_t varint_len(size_t i) noexcept
+  {
+    return i < MIN_2BYTE ? 1 : i < MIN_3BYTE ? 2 : i < MIN_4BYTE ? 3
+      : i < MIN_5BYTE ? 4 : 5;
+  }
+
+  /** @return a mask of the bytes of x that are not zero. Bit k is for
+  the byte at offset k of the 8 bytes that x was loaded from. */
+  static unsigned nonzero_bytes(uint64_t x) noexcept
+  {
+#ifdef WORDS_BIGENDIAN
+    x= __builtin_bswap64(x);
+#endif
+    x|= x >> 4;
+    x|= x >> 2;
+    x|= x >> 1;
+    x&= 0x0101010101010101ULL;
+    return unsigned((x * 0x0102040810204080ULL) >> 56);
+  }
+
+  /** Estimate whether a MEMMOVE of a run is shorter than a WRITE.
+  A copied record differs from the copy only in its changed header bytes,
+  which log_writes() writes. Thus the copy costs the MEMMOVE record and a
+  WRITE record for each range of changed header bytes of the run. If the
+  run is not copied, log_writes() writes the bytes of the run that differ
+  from the old page. Each WRITE record uses 2 bytes or more besides its
+  data. A MEMMOVE of an up-run is priced with the page identifier, and a
+  MEMMOVE of a down-run as a same_page record.
+  @param dest  offset of the run in the reorganized page
+  @param src   offset of the run in the old page
+  @param len   length of the run in bytes
+  @return whether the copy is shorter */
+  bool copy_is_shorter(size_t dest, size_t src, size_t len) const noexcept
+  {
+    const bool up= src < dest;
+    /* See mtr_t::memmove(). */
+    const size_t s= (up ? (dest - src) << 1 | 1 : (src - dest) << 1) - 2;
+    size_t copy= 1 + varint_len(len) + varint_len(s) +
+      (up
+       ? varint_len(m_block.page.id().space()) +
+       varint_len(m_block.page.id().page_no()) + varint_len(dest)
+       : 1);
+    if (copy > 16)
+      /* The record length does not fit in the type byte. */
+      copy++;
+    const size_t end= dest + len;
+    /* Count the changed header bytes and the starts of their ranges. */
+    for (size_t w= dest / WORD_BITS, last= (end - 1) / WORD_BITS,
+           carry= 0; w <= last; w++)
+    {
+      size_t b= m_hdrdiff[w];
+      if (w == dest / WORD_BITS)
+        b&= ~size_t{0} << (dest % WORD_BITS);
+      if (w == last && end % WORD_BITS)
+        b&= ~(~size_t{0} << (end % WORD_BITS));
+      copy+= my_count_bits(b) + 2 * my_count_bits(b & ~(b << 1 | carry));
+      carry= b >> (WORD_BITS - 1);
+    }
+    /* Count the bytes that differ from the old page and the starts of
+    their ranges, 8 bytes at a time. The bytes after the run are in the
+    frame, because the run ends at or below PAGE_HEAP_TOP. log_writes()
+    joins two ranges if the gap between them is 1 byte. Thus a byte
+    starts a range if neither of the 2 bytes before it differs. */
+    size_t write= 0;
+    /* whether each of the last 2 bytes differs */
+    unsigned prev= 0;
+    for (size_t p= dest; p < end; p+= 8)
+    {
+      uint64_t a, b;
+      memcpy(&a, m_new_frame + p, 8);
+      memcpy(&b, m_old_frame + p, 8);
+      unsigned m= nonzero_bytes(a ^ b);
+      if (end - p < 8)
+        m&= (1U << (end - p)) - 1;
+      const unsigned ext= m << 2 | prev;
+      write+= my_count_bits_uint32(m) +
+        2 * my_count_bits_uint32(m & ~(ext >> 1) & ~ext);
+      if (write > copy)
+        return true;
+      prev= m >> 6;
+    }
+    return false;
+  }
+
   /** Handle a run that walk<first>() found. The first walk checks the
-  source. A run that is shorter than MIN_MOVE is marked as not copied.
-  Of the longer runs, the first walk adds to m_up a run that moved
-  towards the end of the page, and the second walk copies a run that
-  moved towards the start of the page.
+  source. A run is marked as not copied if it is shorter than MIN_MOVE,
+  or if copy_is_shorter() does not hold. Of the other runs, the first
+  walk adds to m_up a run that moved towards the end of the page, and
+  the second walk copies a run that moved towards the start of the page.
   @return false on a corrupted page */
   template<bool first>
   bool found_run(size_t dest, size_t src, size_t len) noexcept
@@ -1554,7 +1639,7 @@ private:
         return false;
       if (src < dest)
       {
-        if (len < MIN_MOVE)
+        if (len < MIN_MOVE || !copy_is_shorter(dest, src, len))
           mark_not_copied(dest, len);
         else
           add_up(dest, src, len);
@@ -1562,7 +1647,7 @@ private:
     }
     else if (src > dest)
     {
-      if (len < MIN_MOVE)
+      if (len < MIN_MOVE || !copy_is_shorter(dest, src, len))
         mark_not_copied(dest, len);
       else
         copy_down(dest, src, len);

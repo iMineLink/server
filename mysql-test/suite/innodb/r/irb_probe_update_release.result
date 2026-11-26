@@ -1,0 +1,28 @@
+#
+# MDEV-40144 A waiter on a row modified by a rolling-back
+# transaction must not be granted before that row is undone
+#
+# con_a modifies a=1 first, then 200000 other rows. Rollback
+# undoes a=1 last. con_b waits on a=1; if con_b is granted when
+# the ROLLBACK starts, it reads d=10 and writes 110.
+CREATE TABLE t1 (a INT PRIMARY KEY, d INT) ENGINE=InnoDB;
+INSERT INTO t1 SELECT seq, seq FROM seq_1_to_200001;
+connect con_a,localhost,root,,test;
+BEGIN;
+UPDATE t1 SET d=10 WHERE a=1;
+UPDATE t1 SET d=d+1 WHERE a>1;
+connect con_b,localhost,root,,test;
+UPDATE t1 SET d=d+100 WHERE a=1;
+connection con_a;
+ROLLBACK;
+disconnect con_a;
+connection con_b;
+disconnect con_b;
+connection default;
+SELECT * FROM t1 WHERE a=1;
+a	d
+1	101
+SELECT COUNT(*) FROM t1 WHERE a>1 AND d<>a;
+COUNT(*)
+0
+DROP TABLE t1;

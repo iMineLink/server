@@ -1,0 +1,6 @@
+[off]
+innodb_instant_rollback_enabled=OFF
+
+[on]
+innodb_instant_rollback_enabled=ON
+innodb_instant_rollback_threshold=0

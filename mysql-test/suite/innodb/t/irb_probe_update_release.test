@@ -1,0 +1,38 @@
+--source include/have_innodb.inc
+--source include/have_sequence.inc
+--source include/count_sessions.inc
+
+--echo #
+--echo # MDEV-40144 A waiter on a row modified by a rolling-back
+--echo # transaction must not be granted before that row is undone
+--echo #
+--echo # con_a modifies a=1 first, then 200000 other rows. Rollback
+--echo # undoes a=1 last. con_b waits on a=1; if con_b is granted when
+--echo # the ROLLBACK starts, it reads d=10 and writes 110.
+CREATE TABLE t1 (a INT PRIMARY KEY, d INT) ENGINE=InnoDB;
+INSERT INTO t1 SELECT seq, seq FROM seq_1_to_200001;
+
+connect con_a,localhost,root,,test;
+BEGIN;
+UPDATE t1 SET d=10 WHERE a=1;
+UPDATE t1 SET d=d+1 WHERE a>1;
+
+connect con_b,localhost,root,,test;
+--send UPDATE t1 SET d=d+100 WHERE a=1
+
+connection con_a;
+let $wait_condition= SELECT COUNT(*)=1 FROM information_schema.innodb_trx
+  WHERE trx_state='LOCK WAIT';
+--source include/wait_condition.inc
+ROLLBACK;
+disconnect con_a;
+
+connection con_b;
+--reap
+disconnect con_b;
+
+connection default;
+SELECT * FROM t1 WHERE a=1;
+SELECT COUNT(*) FROM t1 WHERE a>1 AND d<>a;
+DROP TABLE t1;
+--source include/wait_until_count_sessions.inc
